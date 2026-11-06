@@ -1,0 +1,95 @@
+name: Backend CI, Quality & Clean-Room Security Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Supply-Chain Security (agency-devops-automator): Least-privilege GITHUB_TOKEN
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-ci:
+    name: Java 17 Spring Boot Compile, Audit & JUnit 5 Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ./escala-elderly-api
+    steps:
+      # 40-char SHA pinned against tag-hijacking (agency-devops-automator)
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Java 17 (Eclipse Temurin)
+        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v4.3.0
+
+      - name: Broken-Windows Static Audit (agency-code-reviewer)
+        run: |
+          echo "Scanning Java source files for empty swallowed catch blocks..."
+          if grep -rnPzo 'catch\s*\([^)]+\)\s*\{\s*\}' src/main/java/ >/dev/null 2>&1; then
+            echo "::error::Empty swallowed catch block detected in src/main/java/ (Dead Programs Tell No Lies)."
+            exit 1
+          fi
+          echo "Broken-Windows Static Audit passed."
+
+      - name: Compile Java 17 & Run JUnit 5 Test Suite
+        run: |
+          chmod +x ./gradlew
+          ./gradlew check test --no-daemon
+
+  clean-room-security:
+    name: Secret, Credential & LGPD Clean-Room Hygiene Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Block committed .env files, private keys & hardcoded DB passwords (agency-secrets-credential-hygiene-engineer)
+        run: |
+          echo "Checking tracked files for committed .env, private keys, or hardcoded DB credentials..."
+          if git ls-files | grep -E '(^|/)\.env(\..+)?$' | grep -vE '\.env\.example$'; then
+            echo "::error::Committed .env file detected! Use environment variables or .env.example."
+            exit 1
+          fi
+          if grep -rnE 'spring\.(datasource|data\.mongodb|redis)\.(password|secret)\s*=\s*[^$\s]+' escala-elderly-api/src/main/resources/ 2>/dev/null; then
+            echo "::error::Hardcoded database password in application.properties! Inject via environment variables."
+            exit 1
+          fi
+          if grep -rnE '(BEGIN (RSA|OPENSSH|EC|PGP|PRIVATE) KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|sk-[A-Za-z0-9]{20,})' escala-elderly-api/ 2>/dev/null; then
+            echo "::error::Hardcoded secret or private key pattern detected!"
+            exit 1
+          fi
+          echo "Secrets & Credential Hygiene check passed."
+
+      - name: Block bundled reference PDFs & Brazilian PII / CPF leaks (agency-clean-room-data-hygiene-engineer)
+        run: |
+          echo "Scanning backend source and resources for LGPD PII patterns..."
+          if git ls-files escala-elderly-api/src/ | grep -iE '\.pdf$'; then
+            echo "::error::Bundled PDF detected in escala-elderly-api/src/!"
+            exit 1
+          fi
+          if grep -rnE '\b[0-9]{3}\.[0-9]{3}\.[0-9]{3}-[0-9]{2}\b|\b[0-9]{2}\.[0-9]{3}\.[0-9]{3}/[0-9]{4}-[0-9]{2}\b' escala-elderly-api/src/ 2>/dev/null; then
+            echo "::error::Potential Brazilian CPF/CNPJ detected in escala-elderly-api/src/! Use synthetic test fixtures only."
+            exit 1
+          fi
+          if grep -rnP '\b[A-Za-z0-9._%+-]+@(?!([A-Za-z0-9-]+\.)?(example\.(com|org|net)|test|invalid|localhost)\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b' escala-elderly-api/src/ 2>/dev/null; then
+            echo "::error::Non-reserved email domain detected in escala-elderly-api/src/! Use RFC 2606 reserved domains (@example.com)."
+            exit 1
+          fi
+          echo "Clean-Room & LGPD Data Hygiene check passed."

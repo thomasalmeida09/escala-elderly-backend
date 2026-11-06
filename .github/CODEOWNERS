@@ -1,0 +1,4 @@
+# CODEOWNERS — Revisão obrigatória por pares na branch main
+* @thomasalmeida09 @augustoheiss
+/.github/ @thomasalmeida09 @augustoheiss
+/escala-elderly-api/ @thomasalmeida09 @augustoheiss
