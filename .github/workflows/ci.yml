@@ -17,7 +17,7 @@ concurrency:
 jobs:
   backend-ci:
     name: Java 17 Spring Boot Compile, Audit & JUnit 5 Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -25,16 +25,16 @@ jobs:
     steps:
       # 40-char SHA pinned against tag-hijacking (agency-devops-automator)
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
 
       - name: Setup Java 17 (Eclipse Temurin)
-        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0 (Node 24)
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Gradle Cache
-        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v4.3.0
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Broken-Windows Static Audit (agency-code-reviewer)
         run: |
@@ -52,11 +52,11 @@ jobs:
 
   clean-room-security:
     name: Secret, Credential & LGPD Clean-Room Hygiene Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           fetch-depth: 0
 
