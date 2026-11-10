@@ -128,7 +128,7 @@ curl -s -X PATCH http://localhost:8080/api/cuidadores/3/status \
 # Alocar cobertura no posto de Carlos Rocha
 curl -s -X PATCH http://localhost:8080/api/cuidadores/3/status \
   -H "Content-Type: application/json" \
-  -d '{"status":"Cobertura","substituto":"Beatriz Alves"}'
+  -d '{"status":"Cobertura","substituto":"Folguista Turno A"}'
 
 # Restaurar os 4 cuidadores iniciais em 1 clique
 curl -s -X POST http://localhost:8080/api/cuidadores/reset

@@ -57,6 +57,10 @@ class EscalaElderlyApiApplicationTests {
                 .andExpect(jsonPath("$[0].substituto").doesNotExist())
                 .andExpect(jsonPath("$[0].telefone").doesNotExist())
                 .andExpect(jsonPath("$[0].horasDescanso").doesNotExist())
+                .andExpect(content().string(not(containsString("null"))))
+                .andExpect(content().string(not(containsString("\"substituto\""))))
+                .andExpect(content().string(not(containsString("\"telefone\""))))
+                .andExpect(content().string(not(containsString("\"horasDescanso\""))))
                 .andExpect(jsonPath("$[1].id").value(2))
                 .andExpect(jsonPath("$[1].nome").value("Lucas Lima"))
                 .andExpect(jsonPath("$[1].status").value("Presente"))
@@ -84,7 +88,9 @@ class EscalaElderlyApiApplicationTests {
                 .andExpect(jsonPath("$.id").value(3))
                 .andExpect(jsonPath("$.nome").value("Carlos Rocha"))
                 .andExpect(jsonPath("$.status").value("Faltou"))
-                .andExpect(jsonPath("$.substituto").doesNotExist());
+                .andExpect(jsonPath("$.substituto").doesNotExist())
+                .andExpect(content().string(not(containsString("null"))))
+                .andExpect(content().string(not(containsString("\"substituto\""))));
 
         // Verifica que Mariana Costa (id=4) permanece Presente e Carlos (id=3) permanece Faltou
         mockMvc.perform(get("/api/cuidadores"))
@@ -111,7 +117,9 @@ class EscalaElderlyApiApplicationTests {
                                         "{\"status\":\"Presente\",\"substituto\":\"Folguista Turno A\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("Presente"))
-                .andExpect(jsonPath("$.substituto").doesNotExist());
+                .andExpect(jsonPath("$.substituto").doesNotExist())
+                .andExpect(content().string(not(containsString("null"))))
+                .andExpect(content().string(not(containsString("\"substituto\""))));
     }
 
     @Test
@@ -153,7 +161,9 @@ class EscalaElderlyApiApplicationTests {
                 .andExpect(jsonPath("$[0].telefone").value("+55 11 90000-0010"))
                 .andExpect(jsonPath("$[0].horasDescanso").value(24))
                 .andExpect(jsonPath("$[1].id").value(11))
-                .andExpect(jsonPath("$[1].nome").value("Folguista Turno B"));
+                .andExpect(jsonPath("$[1].nome").value("Folguista Turno B"))
+                .andExpect(content().string(not(containsString("null"))))
+                .andExpect(content().string(not(containsString("\"substituto\""))));
 
         mockMvc.perform(get("/api/cuidadores"))
                 .andExpect(status().isOk())
@@ -166,7 +176,9 @@ class EscalaElderlyApiApplicationTests {
                 .andExpect(jsonPath("$.length()").value(4))
                 .andExpect(jsonPath("$[2].id").value(3))
                 .andExpect(jsonPath("$[2].nome").value("Carlos Rocha"))
-                .andExpect(jsonPath("$[2].status").value("Presente"));
+                .andExpect(jsonPath("$[2].status").value("Presente"))
+                .andExpect(content().string(not(containsString("null"))))
+                .andExpect(content().string(not(containsString("\"substituto\""))));
     }
 
     @Test
