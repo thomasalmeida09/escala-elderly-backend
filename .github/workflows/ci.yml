@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  LC_ALL: C.UTF-8
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -17,7 +20,7 @@ concurrency:
 jobs:
   backend-ci:
     name: Java 17 Spring Boot Compile, Audit & JUnit 5 Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -25,40 +28,57 @@ jobs:
     steps:
       # 40-char SHA pinned against tag-hijacking (agency-devops-automator)
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
 
       - name: Setup Java 17 (Eclipse Temurin)
-        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0 (Node 24)
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Gradle Cache
-        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v4.3.0
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1 (Node 24)
 
       - name: Broken-Windows Static Audit (agency-code-reviewer)
         run: |
           echo "Scanning Java source files for empty swallowed catch blocks..."
           if grep -rnPzo 'catch\s*\([^)]+\)\s*\{\s*\}' src/main/java/ >/dev/null 2>&1; then
-            echo "::error::Empty swallowed catch block detected in src/main/java/ (Dead Programs Tell No Lies)."
+            echo "::error title=Empty Catch Block::Empty swallowed catch block detected in src/main/java/ (Dead Programs Tell No Lies)."
             exit 1
           fi
           echo "Broken-Windows Static Audit passed."
 
-      - name: Compile Java 17 & Run JUnit 5 Test Suite
+      - name: Verify Java Code Formatting (Spotless Google Java Format AOSP)
         run: |
           chmod +x ./gradlew
-          ./gradlew check test --no-daemon
+          if ! ./gradlew spotlessCheck --no-daemon; then
+            echo "::error title=Spotless Formatting Gate::Code formatting deviation detected! Run 'cd escala-elderly-api && ./gradlew spotlessApply' (or '.\gradlew.bat spotlessApply' on Windows) before committing."
+            exit 1
+          fi
+
+      - name: Compile Java 17 & Run JUnit 5 Test Suite
+        run: |
+          ./gradlew check test -x spotlessCheck --no-daemon --warning-mode=all
 
   clean-room-security:
     name: Secret, Credential & LGPD Clean-Room Hygiene Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           fetch-depth: 0
+
+      - name: Block UTF-8 BOM in tracked text files (Windows PowerShell 5.1 guard)
+        run: |
+          echo "Scanning all tracked text files for UTF-8 BOM (0xEF 0xBB 0xBF)..."
+          bom_files=$(git ls-files | grep -vE '\.(jar|png|jpg|jpeg|gif|ico|pdf)$' | LC_ALL=C xargs grep -l $'^\xef\xbb\xbf' 2>/dev/null || true)
+          if [ -n "$bom_files" ]; then
+            echo "::error title=UTF-8 BOM Detected::UTF-8 BOM (0xEF 0xBB 0xBF) detected in: $bom_files. Save files as UTF-8 without BOM (avoid PowerShell 5.1 'Set-Content -Encoding UTF8')."
+            exit 1
+          fi
+          echo "UTF-8 BOM hygiene check passed (0 files with BOM)."
 
       - name: Block committed .env files, private keys & hardcoded DB passwords (agency-secrets-credential-hygiene-engineer)
         run: |
