@@ -34,27 +34,44 @@ API RESTful responsável pelo gerenciamento de estado dos cuidadores, plantões 
 escala-elderly-backend/
 ├── .github/
 │   ├── workflows/
-│   │   └── ci.yml                                     # Pipeline CI Dual-Job (Spotless, JUnit 5, Anti-BOM & LGPD)
-│   ├── CODEOWNERS                                     # Roteamento automático de Code Review (@thomasalmeida09 @augustoheiss)
-│   ├── pull_request_template.md                       # Checklist de PR alinhado 1:1 às ADR-BE-001..010
-│   └── ruleset-main-protection.json                   # Definição auditável de proteção da branch main
+│   │   └── ci.yml                                            # Pipeline CI Dual-Job (Spotless, JUnit, Anti-BOM & LGPD)
+│   ├── CODEOWNERS                                            # Roteamento automático de Code Review (@thomasalmeida09 @augustoheiss)
+│   ├── pull_request_template.md                              # Checklist de PR alinhado 1:1 às ADR-BE-001..010
+│   └── ruleset-main-protection.json                          # Definição auditável de proteção da branch main
 ├── docs/
 │   └── adr/
-│       ├── README.md                                  # Catálogo de ADRs do Backend e Governança
-│       └── QUADRO-KANBAN-SPRINTS.md                   # Divisão das Issues por Sprints e Colunas
+│       ├── README.md                                         # Catálogo de ADRs do Backend e Governança (ADR-BE-001..010)
+│       └── QUADRO-KANBAN-SPRINTS.md                          # Divisão das Issues por Sprints e Colunas
 ├── escala-elderly-api/
 │   ├── src/
-│   │   ├── main/java/escala_elderly_api/
-│   │   │   ├── EscalaElderlyApiApplication.java       # Classe de inicialização (@SpringBootApplication)
-│   │   │   ├── CuidadorController.java                # Endpoints REST (/api/cuidadores) com CORS
-│   │   │   └── Cuidador.java                          # Modelo de domínio serializado via Jackson
-│   │   └── test/java/escala_elderly_api/
-│   │       └── EscalaElderlyApiApplicationTests.java  # Testes JUnit 5 (Contexto, Contrato REST & CORS MockMvc)
-│   ├── build.gradle                                   # Spring WebMVC, Java 17 Toolchain & Spotless (AOSP)
-│   └── gradlew / gradlew.bat                          # Gradle Wrapper (9.5.1)
-├── .editorconfig                                      # Padrão de indentação, UTF-8 sem BOM e LF
-├── .gitattributes                                     # Normalização determinística de quebras de linha (LF)
-└── .gitignore                                         # Exclusão de binários, cache Gradle e arquivos de IDE
+│   │   ├── main/
+│   │   │   ├── java/escala_elderly_api/
+│   │   │   │   ├── EscalaElderlyApiApplication.java          # Classe de inicialização (@SpringBootApplication)
+│   │   │   │   ├── WebApiConfig.java                         # CorsFilter em /api/** e customizador estrito Jackson 3
+│   │   │   │   ├── CuidadorController.java                   # Rotas REST (GET, PATCH /status, POST /batch, POST /reset)
+│   │   │   │   ├── CuidadorService.java                      # Motor MVCC lock-free (AtomicReference<List<Cuidador>>)
+│   │   │   │   ├── Cuidador.java                             # Entidade imutável canônica (@JsonInclude NON_NULL)
+│   │   │   │   ├── StatusCuidador.java                       # Política dos 4 status válidos (Presente, Faltou, Folga, Cobertura)
+│   │   │   │   ├── StatusUpdateRequest.java                  # Record DTO para PATCH /api/cuidadores/{id}/status
+│   │   │   │   ├── CuidadorBatchItem.java                    # Record DTO para POST /api/cuidadores/batch
+│   │   │   │   ├── CuidadorNotFoundException.java            # Exceção de domínio 404 (CUIDADOR_NOT_FOUND)
+│   │   │   │   ├── InvalidCuidadorPayloadException.java      # Exceção de domínio 400 (INVALID_PAYLOAD / STATUS / ID)
+│   │   │   │   ├── ApiExceptionHandler.java                  # @RestControllerAdvice uniforme (400/404/405/415/500)
+│   │   │   │   └── ApiErrorResponse.java                     # Record padronizado de erro HTTP (code, message, path, timestamp)
+│   │   │   └── resources/
+│   │   │       └── application.properties                    # Configuração base da aplicação Spring Boot
+│   │   └── test/
+│   │       └── java/escala_elderly_api/
+│   │           ├── EscalaElderlyApiApplicationTests.java     # Testes integrados MockMvc (Contrato, PATCH/POST, Erros & CORS)
+│   │           ├── CuidadorServiceTest.java                  # Testes unitários de estado, lotes e barreira CyclicBarrier (24 threads)
+│   │           └── GovernanceHygieneTest.java                # Fitness Functions (paridade README 1:1, ADRs, CI & Clean-Room LGPD)
+│   ├── build.gradle                                          # Spring WebMVC, Java 17 Toolchain & Spotless (AOSP)
+│   ├── settings.gradle                                       # Definição do módulo Gradle escala-elderly-api
+│   └── gradlew / gradlew.bat                                 # Gradle Wrapper (9.5.1)
+├── .editorconfig                                             # Padrão de indentação, UTF-8 sem BOM e LF
+├── .gitattributes                                            # Normalização determinística de quebras de linha (LF)
+├── .gitignore                                                # Exclusão de binários, cache Gradle e arquivos de IDE
+└── README.md                                                 # Documentação principal, árvore arquitetural e guia rápido
 ```
 
 ---
@@ -63,10 +80,10 @@ escala-elderly-backend/
 
 | Método | Rota | Descrição | Status |
 | :---: | :--- | :--- | :---: |
-| `GET` | `/api/cuidadores` | Lista todos os cuidadores e seus status atuais no turno | Implementado (V1.0) |
-| `PATCH` | `/api/cuidadores/{id}/status` | Atualiza o status de presença/falta/cobertura de um cuidador | Sprint 1 ([Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
-| `POST` | `/api/cuidadores/batch` | Sincroniza lote de cuidadores importados via planilha CSV | Sprint 1 ([Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
-| `POST` | `/api/cuidadores/reset` | Restaura a escala inicial para demonstração | Sprint 1 ([Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
+| `GET` | `/api/cuidadores` | Lista todos os cuidadores alinhados ao Frontend (`id: 3 = Carlos Rocha`) | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
+| `PATCH` | `/api/cuidadores/{id}/status` | Atualiza o status (`Presente`, `Faltou`, `Folga`, `Cobertura`) e `substituto` opcional | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
+| `POST` | `/api/cuidadores/batch` | Sincroniza atomicamente lote de cuidadores importados via planilha CSV | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
+| `POST` | `/api/cuidadores/reset` | Restaura instantaneamente a escala inicial canônica de demonstração | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
 | `GET` | `/api/cuidadores/stream` | Stream de atualização em tempo real via Server-Sent Events (SSE) | Sprint 3 ([Issue #3](https://github.com/thomasalmeida09/escala-elderly-backend/issues/3)) |
 
 ---
@@ -93,11 +110,29 @@ cd escala-elderly-api
 # Ou no Windows PowerShell/CMD:
 .\gradlew.bat spotlessApply
 
-# 4. Executar verificação de formatação + suíte de testes automatizados (JUnit 5)
+# 4. Executar verificação de formatação + suíte de testes automatizados (JUnit)
 ./gradlew check test
 ```
 
-A API responderá em **`http://localhost:8080/api/cuidadores`**.
+A API responderá em **`http://localhost:8080/api/cuidadores`**. Exemplos rápidos de teste via `curl`:
+
+```bash
+# Listar escala ativa
+curl -s http://localhost:8080/api/cuidadores
+
+# Registrar falta de Carlos Rocha (id = 3)
+curl -s -X PATCH http://localhost:8080/api/cuidadores/3/status \
+  -H "Content-Type: application/json" \
+  -d '{"status":"Faltou"}'
+
+# Alocar cobertura no posto de Carlos Rocha
+curl -s -X PATCH http://localhost:8080/api/cuidadores/3/status \
+  -H "Content-Type: application/json" \
+  -d '{"status":"Cobertura","substituto":"Beatriz Alves"}'
+
+# Restaurar os 4 cuidadores iniciais em 1 clique
+curl -s -X POST http://localhost:8080/api/cuidadores/reset
+```
 
 ---
 
@@ -105,5 +140,5 @@ A API responderá em **`http://localhost:8080/api/cuidadores`**.
 
 1. **Gestão de Tarefas:** Escolha uma Issue na coluna `🎯 Sprint 1 (To Do - Fundação)` do [GitHub Projects](https://github.com/users/augustoheiss/projects/1) e atribua seu usuário (`Assignee`).
 2. **Padrão de Branches:** Crie uma branch a partir da `main` seguindo o padrão `feat/issue-XX-descricao` ou `fix/issue-XX-descricao`.
-3. **Padrão de Commits:** Utilize *Conventional Commits* (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `ci:`).
-4. **Pull Requests (PRs):** Abra um PR referenciando a Issue (`Closes #XX`), garanta que `./gradlew check test` está passando na **CI (GitHub Actions)** e solicite **1 Code Review** antes do *Squash and Merge*.
+3. **Padrão de Commits:** Utilize *Conventional Commits* (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `ci:`) sob a disciplina *Fowler's Two Hats* (`ADR-BE-009`).
+4. **Pull Requests (PRs):** Abra um PR referenciando a Issue (`Closes #XX`), garanta que `./gradlew check test` está passando na **CI (GitHub Actions)** (`ADR-BE-008`) e solicite **1 Code Review** antes do *Squash and Merge*.

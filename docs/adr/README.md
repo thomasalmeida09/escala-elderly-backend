@@ -20,15 +20,15 @@ Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, di
 
 ---
 
-### 📌 ADR-BE-001: Arquitetura REST API Desacoplada com CORS Habilitado
+### 📌 ADR-BE-001: Arquitetura REST API Desacoplada com CORS Habilitado e Erros Uniformes
 - **Status:** `ACEITA / IMPLEMENTADA`
-- **Onde está no código:** [`CuidadorController.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorController.java).
-- **Decisão:** Expor o Backend como uma API RESTful independente na porta `8080` (`@RestController`) com `@CrossOrigin(origins = "*")` habilitado para consumo direto pela SPA React (`localhost:5173`).
+- **Onde está no código:** [`CuidadorController.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorController.java), [`WebApiConfig.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/WebApiConfig.java) e [`ApiExceptionHandler.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/ApiExceptionHandler.java).
+- **Decisão:** Expor o Backend como uma API RESTful independente na porta `8080` (`@RestController`) com `@CrossOrigin` explícito (`GET, POST, PATCH, OPTIONS`), `CorsFilter` na camada de *Servlet Filter* para todo o prefixo `/api/**` (garantindo cabeçalhos CORS inclusive em respostas `404`/`405`/`415`) e envelope padronizado de erro `ApiErrorResponse` (`code`, `message`, `path`, `timestamp`) para consumo direto pela SPA React (`localhost:5173`).
 - **Por quê (Motivação):**
-  - Separar responsabilidades entre a camada de apresentação (React) e a camada de regras/dados (Java), permitindo evolução independente e testes diretos via navegador, Postman ou cURL.
+  - Separar responsabilidades entre a camada de apresentação (React) e a camada de regras/dados (Java), permitindo evolução independente, preflight `OPTIONS` determinístico em mutações `PATCH`/`POST` e diagnóstico claro de erros via navegador, Postman ou cURL.
 - **Trade-offs (Vantagens vs. Custos Assumidos):**
-  - ✅ **Vantagens:** Integração imediata sem bloqueio de CORS em ambiente de desenvolvimento; arquitetura limpa cliente-servidor.
-  - ⚠️ **Custos / Cuidados:** Em produção/apresentação final, as origens do `@CrossOrigin` devem ser parametrizáveis via `application.properties` (previsto na **Issue #4**).
+  - ✅ **Vantagens:** Integração imediata sem bloqueio de CORS em ambiente de desenvolvimento; arquitetura limpa cliente-servidor sem vazamento de *stack traces*.
+  - ⚠️ **Custos / Cuidados:** Em produção/apresentação final, as origens permitidas de CORS devem ser parametrizáveis via `application.properties` (previsto na **Issue #4**).
 
 ---
 
@@ -39,53 +39,55 @@ Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, di
 - **Por quê (Motivação):**
   - O Spring Boot fornece servidor Tomcat embutido, injeção de dependência nativa e serialização JSON automática; o Gradle Wrapper garante que todos os desenvolvedores usem exatamente a mesma versão do Gradle e do Java 17 sem configuração manual complexa.
 - **Trade-offs (Vantagens vs. Custos Assumidos):**
-  - ✅ **Vantagens:** Ecossistema robusto de mercado, tipagem estática forte e suporte nativo a JUnit 5 (`useJUnitPlatform()`).
+  - ✅ **Vantagens:** Ecossistema robusto de mercado, tipagem estática forte e suporte nativo a JUnit (`useJUnitPlatform()`).
   - ⚠️ **Custos / Cuidados:** O projeto Gradle encontra-se dentro do subdiretório [`escala-elderly-api/`](../../escala-elderly-api/), exigindo que comandos `./gradlew` e pipelines de CI apontem para `working-directory: ./escala-elderly-api`.
 
 ---
 
-### 📌 ADR-BE-003: Modelagem de Domínio Explícita e Serialização via Jackson (`Cuidador.java`)
+### 📌 ADR-BE-003: Modelagem de Domínio Imutável, DTOs em Java `record` e Serialização Estrita via Jackson 3
 - **Status:** `ACEITA / IMPLEMENTADA`
-- **Onde está no código:** [`Cuidador.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/Cuidador.java).
-- **Decisão:** Representar a entidade `Cuidador` através de uma classe Java explícita com construtor parametrizado e métodos `getters` públicos (`getId()`, `getNome()`, `getStatus()`) para serialização automática em JSON pelo Jackson.
+- **Onde está no código:** [`Cuidador.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/Cuidador.java), [`StatusUpdateRequest.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/StatusUpdateRequest.java), [`CuidadorBatchItem.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorBatchItem.java), [`ApiErrorResponse.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/ApiErrorResponse.java) e [`WebApiConfig.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/WebApiConfig.java).
+- **Decisão:** Representar a entidade `Cuidador` através de uma classe Java **100% imutável** (`private final` em todos os campos, zero métodos `set*`, `@JsonCreator` canônico e `@JsonInclude(JsonInclude.Include.NON_NULL)`, preservando também o construtor enxuto de 3 argumentos), combinada com Java 17 `record`s para os DTOs de entrada/saída (`StatusUpdateRequest`, `CuidadorBatchItem`, `ApiErrorResponse`) e `JsonMapperBuilderCustomizer` bloqueando coerções silenciosas escalares no Jackson 3 (`3.7 -> 3`, `true -> "true"`).
 - **Por quê (Motivação):**
-  - Evitar "mágica excessiva" de bibliotecas externas (como Lombok) no primeiro commit, garantindo que qualquer membro da equipe entenda exatamente como o objeto Java é construído e transformado em JSON.
+  - Evitar bibliotecas mágicas externas (como Lombok), blindar matematicamente os snapshots em memória do `CuidadorService` contra mutações externas por referência (*Shy Code*), omitir chaves nulas no JSON para paridade exata com propriedades opcionais `?` do TypeScript e rejeitar payloads malformados com `400 Bad Request`.
 - **Trade-offs (Vantagens vs. Custos Assumidos):**
-  - ✅ **Vantagens:** Zero problemas de configuração de *Annotation Processors* nas IDEs (VS Code, IntelliJ, Eclipse) da equipe.
-  - ⚠️ **Custos / Cuidados:** Ao adicionar novos campos (`turno`, `quarto`) e endpoints `PATCH`/`POST` (que exigem desserialização de JSON de entrada), será necessário incluir construtor padrão vazio `public Cuidador() {}` e `setters` (ou usar Java `record` para DTOs).
+  - ✅ **Vantagens:** Zero configuração de *Annotation Processors* nas IDEs, *thread-safety* estrutural por imutabilidade e contrato JSON previsível entre Java e TypeScript.
+  - ⚠️ **Custos / Cuidados:** Toda atualização de estado instancia um novo `Cuidador` imutável dentro de `CuidadorService` em vez de mutar campos *in-place*, custo desprezível (nanossegundos) que elimina inteiramente condições de corrida.
 
 ---
 
 ### 📌 ADR-BE-004: Código Comentado Didaticamente para Nivelamento da Equipe
 - **Status:** `ACEITA / IMPLEMENTADA`
-- **Onde está no código:** Comentários explicativos em [`Cuidador.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/Cuidador.java) e [`CuidadorController.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorController.java).
-- **Decisão:** Documentar no próprio código o papel de cada anotação do Spring (`@RestController`, `@CrossOrigin`, `@GetMapping`) e das estruturas do Java (`List`, `ArrayList`).
+- **Onde está no código:** Comentários explicativos em [`Cuidador.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/Cuidador.java), [`CuidadorController.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorController.java) e [`CuidadorService.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorService.java).
+- **Decisão:** Documentar no próprio código o papel de cada anotação do Spring (`@RestController`, `@CrossOrigin`, `@GetMapping`, `@PatchMapping`, `@PostMapping`, `@Service`) e das decisões de imutabilidade e concorrência.
 - **Por quê (Motivação):**
   - Garantir que todos os integrantes do projeto compreendam o funcionamento interno da API, acelerando a curva de aprendizado.
 - **Trade-offs (Vantagens vs. Custos Assumidos):**
   - ✅ **Vantagens:** Excelente didática e inclusão técnica de todo o time.
-  - ⚠️ **Dívida Técnica Mapeada (Resolvida na Issue #1):** No último commit (`fee6bf1`), o arquivo `CuidadorController.java` acabou truncado na linha 30 (faltando fechar `}}` e `import java.util.ArrayList;`), evidenciando a necessidade imediata da **Issue #1** e do **Continuous Integration (ADR-BE-008)**.
+  - ⚠️ **Dívida Técnica Mapeada (Resolvida na Issue #1):** No commit inicial (`fee6bf1`), o arquivo `CuidadorController.java` acabou truncado na linha 30, evidenciando a necessidade imediata da **Issue #1** e do **Continuous Integration (`ADR-BE-008`)**.
 
 ---
 
-## 📙 GRUPO 2: Decisões de Governança e Evolução do Backend (`STATUS: DEFINIDAS PARA INÍCIO DAS SPRINTS`)
+## 📙 GRUPO 2: Decisões de Governança e Evolução do Backend (`STATUS: ATIVAS NAS SPRINTS`)
 
 ---
 
 ### 🗳️ ADR-BE-005: Escopo do Backend Dividido em 3 Sprints Evolutivas
+- **Status:** `ACEITA / IMPLEMENTADA`
 - **Pergunta:** *"Qual o escopo do projeto no Backend?"*
 - **Decisão:** Evoluir a API em **3 etapas claras**:
   1. **🟢 Sprint 1 (`sprint-1: fundacao` — Issues [#1](https://github.com/thomasalmeida09/escala-elderly-backend/issues/1), [#2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2) e [#5](https://github.com/thomasalmeida09/escala-elderly-backend/issues/5)):**
      - Corrigir a compilação de `CuidadorController.java`, adicionar `.gitignore`/Spotless/CI (#1 e #5);
      - Alinhar a semente inicial de dados com o Frontend (`id: 3` = `Carlos Rocha`, status `"Presente"`) e criar `CuidadorService` em memória thread-safe com os endpoints `PATCH /api/cuidadores/{id}/status`, `POST /api/cuidadores/batch` e `POST /api/cuidadores/reset` (#2).
   2. **🔵 Sprint 2 (`sprint-2: mvp-core`):**
-     - Suporte completo à persistência dos lotes importados via planilha CSV (`POST /api/cuidadores/batch`) e registro de cobertura de falta.
+     - Suporte completo à persistência dos lotes importados via planilha CSV (`POST /api/cuidadores/batch`) e registro de cobertura de falta (`substituto`, `telefone`, `horasDescanso`).
   3. **🟣 Sprint 3 (`sprint-3: evolucao` — Issues [#3](https://github.com/thomasalmeida09/escala-elderly-backend/issues/3) e [#4](https://github.com/thomasalmeida09/escala-elderly-backend/issues/4)):**
      - Endpoint de tempo real `GET /api/cuidadores/stream` via **Server-Sent Events (`SseEmitter`)** (#3) e proteção LGPD / sanitização contra *CSV Formula Injection* (#4).
 
 ---
 
 ### 🗳️ ADR-BE-006: Gestão de Tarefas via GitHub Issues + GitHub Projects (Kanban Unificado)
+- **Status:** `ACEITA / IMPLEMENTADA`
 - **Pergunta:** *"Como vamos gerenciar as tarefas?"*
 - **Decisão:** Gerenciar todas as demandas do Backend junto com o Frontend no quadro unificado do **GitHub Projects** (`📋 Backlog` $\rightarrow$ `🎯 Sprint 1 (To Do)` $\rightarrow$ `🔨 In Progress` $\rightarrow$ `👀 In Review (PR)` $\rightarrow$ `✅ Done`), vinculando cada PR à sua respectiva Issue.
 
@@ -102,22 +104,22 @@ Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, di
   2. **EditorConfig & GitAttributes (`.editorconfig` / `.gitattributes`):** `charset = utf-8` (sem BOM), `end_of_line = lf`, `indent_size = 4` para Java/Gradle e `2` para YAML/JSON/Markdown.
   3. **Convenções Java:**
      - Classes em `PascalCase` (`CuidadorController`, `CuidadorService`), métodos e variáveis em `camelCase` (`listarCuidadores`, `atualizarStatus`);
-     - Separar responsabilidades em pacotes/classes claras mantendo os comentários didáticos essenciais (`ADR-BE-004`).
+     - Separar responsabilidades em classes coesas mantendo os comentários didáticos essenciais (`ADR-BE-004`).
 
 ---
 
 ### 🗳️ ADR-BE-008: Continuous Integration (CI) & Portaria de Segurança/LGPD no Backend com GitHub Actions
 - **Status:** `ACEITA / IMPLEMENTADA`
-- **Onde está no código:** [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) e [`.github/ruleset-main-protection.json`](../../.github/ruleset-main-protection.json).
+- **Onde está no código:** [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), [`.github/ruleset-main-protection.json`](../../.github/ruleset-main-protection.json) e [`GovernanceHygieneTest.java`](../../escala-elderly-api/src/test/java/escala_elderly_api/GovernanceHygieneTest.java).
 - **Pergunta:** *"Como vai funcionar o Continuous Integration?"*
 - **Decisão:** Configurar `.github/workflows/ci.yml` (`ubuntu-24.04`, `permissions: contents: read`, Actions fixadas por SHA de 40 caracteres em runtime Node 24) executando 2 jobs obrigatórios em todo `push` e `pull_request` para a `main`:
   1. **`Java 17 Spring Boot Compile, Audit & JUnit 5 Gate` (`backend-ci`):**
      - Setup do **JDK 17 (Eclipse Temurin)** com cache do Gradle (`gradle/actions/setup-gradle@v6.4.1`) em `./escala-elderly-api`;
      - Auditoria estática *Broken-Windows* bloqueando blocos `catch {}` vazios;
-     - Verificação explícita de formatação `./gradlew spotlessCheck --no-daemon` seguida de compilação e testes JUnit 5 `./gradlew check test -x spotlessCheck --no-daemon --warning-mode=all`.
+     - Verificação explícita de formatação `./gradlew spotlessCheck --no-daemon` seguida de compilação e testes JUnit `./gradlew check test -x spotlessCheck --no-daemon --warning-mode=all` (incluindo *Fitness Functions* de governança em `GovernanceHygieneTest`).
   2. **`Secret, Credential & LGPD Clean-Room Hygiene Gate` (`clean-room-security`):**
      - Bloqueio determinístico de BOM UTF-8 (`0xEF 0xBB 0xBF`), arquivos `.env`, senhas hardcoded em `application.properties`, chaves privadas/tokens, PDFs de referência e vazamentos de CPF/CNPJ ou e-mails reais fora da RFC 2606 (`@example.com`).
-- **Motivação & Trade-off:** Garante que nenhum commit com erro de compilação, formatação divergente, teste quebrado ou vazamento de segredos/PII LGPD possa ser mergeado na `main`.
+- **Motivação & Trade-off:** Garante que nenhum commit com erro de compilação, formatação divergente, deriva documental em `README.md`, teste quebrado ou vazamento de segredos/PII LGPD possa ser mergeado na `main`.
 
 ---
 
@@ -127,14 +129,16 @@ Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, di
 - **Pergunta:** *"Como vão ser os PRs?"*
 - **Decisão:**
   1. **Branch `main` Protegida (Ruleset):** Toda alteração é desenvolvida em branch dedicada (`fix/issue-01-...`, `feat/issue-02-...`), bloqueando *force-pushes* e exigindo histórico linear.
-  2. **Conventional Commits & Fowler's Two Hats:** `feat(api): ...`, `fix(api): ...`, `docs(adr): ...`, `test(api): ...`, `ci(backend): ...`, `style(api): ...`.
+  2. **Conventional Commits & Fowler's Two Hats:** `feat(api): ...`, `feat(domain): ...`, `fix(api): ...`, `docs(governance): ...`, `test(api): ...`, `ci(backend): ...`, `style(api): ...`.
   3. **Critérios para Merge:** Template de PR preenchido (`Closes #Número`) + **2 Checks da CI Verdes (`backend-ci` e `clean-room-security`)** + **1 Aprovação (Code Review roteado via `CODEOWNERS`)** + **Squash and Merge**.
 
 ---
 
-### 🗳️ ADR-BE-010: Contrato JSON Canônico Alinhado ao Frontend e Persistência em Memória/H2
+### 🗳️ ADR-BE-010: Contrato JSON Canônico Alinhado ao Frontend e Motor MVCC em Memória (`CuidadorService`)
+- **Status:** `ACEITA / IMPLEMENTADA`
+- **Onde está no código:** [`Cuidador.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/Cuidador.java), [`StatusCuidador.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/StatusCuidador.java), [`CuidadorService.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorService.java) e [`CuidadorController.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorController.java).
 - **Decisão:**
-  - Unificar os IDs e os status da API com o Frontend para evitar o bug em que clicar em *"Falta de Carlos"* alterava o registro errado:
+  - Unificar os IDs (`1..4`, com `id: 3 = Carlos Rocha`) e os 4 status canônicos (`Presente`, `Faltou`, `Folga`, `Cobertura`) da API com o Frontend para eliminar definitivamente o bug em que clicar em *"Falta de Carlos"* alterava o registro errado:
     ```json
     [
       { "id": 1, "nome": "Ana Souza", "status": "Presente", "turno": "Diurno (07h-19h)", "quarto": "Quarto 01" },
@@ -143,4 +147,4 @@ Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, di
       { "id": 4, "nome": "Mariana Costa", "status": "Presente", "turno": "Noturno (19h-07h)", "quarto": "Quarto 04" }
     ]
     ```
-  - Manter a persistência em um `CuidadorService` thread-safe (ou banco H2 em memória) para que a API rode instantaneamente com `./gradlew bootRun` em qualquer computador sem exigir instalação externa de banco de dados.
+  - Manter a persistência ativa em um `CuidadorService` *thread-safe* baseado em snapshot imutável MVCC (`AtomicReference<List<Cuidador>>`), expondo leituras *lock-free* em $O(1)$ (`GET /api/cuidadores`) e mutações atômicas *All-or-Nothing* (`PATCH /api/cuidadores/{id}/status`, `POST /api/cuidadores/batch` com Auto-ID monotônico `maxExplicitId + 1` e `POST /api/cuidadores/reset`), rodando instantaneamente com `./gradlew bootRun` sem exigir banco de dados externo.
