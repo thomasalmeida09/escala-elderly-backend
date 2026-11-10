@@ -10,6 +10,11 @@ plugins {
 group = 'com.escalaelderly'
 version = '0.0.1-SNAPSHOT'
 
+// Prevent Google Drive Desktop (drivefs) file-lock contention on ephemeral Gradle build outputs
+if (System.getenv('CI') == null && projectDir.absolutePath.contains('GoogleDrive')) {
+    layout.buildDirectory.set(file("${System.getProperty('java.io.tmpdir')}/escala-elderly-build/${project.name}"))
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
