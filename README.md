@@ -79,8 +79,13 @@ cd escala-elderly-api
 # Ou no Windows PowerShell/CMD:
 .\gradlew.bat bootRun
 
-# 3. Executar a suíte de testes automatizados (JUnit 5)
-./gradlew test
+# 3. Padronizar formatação automática Java (Spotless / Google Java Format AOSP) antes de commitar
+./gradlew spotlessApply
+# Ou no Windows PowerShell/CMD:
+.\gradlew.bat spotlessApply
+
+# 4. Executar verificação de formatação + suíte de testes automatizados (JUnit 5)
+./gradlew check test
 ```
 
 A API responderá em **`http://localhost:8080/api/cuidadores`**.
