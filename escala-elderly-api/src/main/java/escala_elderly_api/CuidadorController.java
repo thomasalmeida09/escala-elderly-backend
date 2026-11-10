@@ -1,10 +1,10 @@
 package escala_elderly_api;
 
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
-import java.util.ArrayList;
-import java.util.List;
 
 @RestController // 1. Avisa o Spring que este arquivo vai responder chamadas de internet
 @CrossOrigin(origins = "*") // 2. Libera o acesso para o React
