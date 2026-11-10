@@ -32,20 +32,30 @@ API RESTful responsável pelo gerenciamento de estado dos cuidadores, plantões 
 
 ```text
 escala-elderly-backend/
+├── .github/
+│   ├── workflows/
+│   │   └── ci.yml                                     # Pipeline CI Dual-Job (Spotless, JUnit 5, Anti-BOM & LGPD)
+│   ├── CODEOWNERS                                     # Roteamento automático de Code Review (@thomasalmeida09 @augustoheiss)
+│   ├── pull_request_template.md                       # Checklist de PR alinhado 1:1 às ADR-BE-001..010
+│   └── ruleset-main-protection.json                   # Definição auditável de proteção da branch main
 ├── docs/
 │   └── adr/
 │       ├── README.md                                  # Catálogo de ADRs do Backend e Governança
 │       └── QUADRO-KANBAN-SPRINTS.md                   # Divisão das Issues por Sprints e Colunas
-└── escala-elderly-api/
-    ├── src/
-    │   ├── main/java/escala_elderly_api/
-    │   │   ├── EscalaElderlyApiApplication.java       # Classe de inicialização (@SpringBootApplication)
-    │   │   ├── CuidadorController.java                # Endpoints REST (/api/cuidadores) com CORS
-    │   │   └── Cuidador.java                          # Modelo de domínio serializado via Jackson
-    │   └── test/java/escala_elderly_api/
-    │       └── EscalaElderlyApiApplicationTests.java  # Suíte de testes JUnit 5
-    ├── build.gradle                                   # Dependências Spring WebMVC e Java 17 Toolchain
-    └── gradlew / gradlew.bat                          # Gradle Wrapper
+├── escala-elderly-api/
+│   ├── src/
+│   │   ├── main/java/escala_elderly_api/
+│   │   │   ├── EscalaElderlyApiApplication.java       # Classe de inicialização (@SpringBootApplication)
+│   │   │   ├── CuidadorController.java                # Endpoints REST (/api/cuidadores) com CORS
+│   │   │   └── Cuidador.java                          # Modelo de domínio serializado via Jackson
+│   │   └── test/java/escala_elderly_api/
+│   │       ├── CuidadorControllerTest.java            # Testes de contrato REST e CORS (MockMvc)
+│   │       └── EscalaElderlyApiApplicationTests.java  # Smoke test do contexto Spring Boot (JUnit 5)
+│   ├── build.gradle                                   # Spring WebMVC, Java 17 Toolchain & Spotless (AOSP)
+│   └── gradlew / gradlew.bat                          # Gradle Wrapper (9.5.1)
+├── .editorconfig                                      # Padrão de indentação, UTF-8 sem BOM e LF
+├── .gitattributes                                     # Normalização determinística de quebras de linha (LF)
+└── .gitignore                                         # Exclusão de binários, cache Gradle e arquivos de IDE
 ```
 
 ---
@@ -97,4 +107,4 @@ A API responderá em **`http://localhost:8080/api/cuidadores`**.
 1. **Gestão de Tarefas:** Escolha uma Issue na coluna `🎯 Sprint 1 (To Do - Fundação)` do [GitHub Projects](https://github.com/users/augustoheiss/projects/1) e atribua seu usuário (`Assignee`).
 2. **Padrão de Branches:** Crie uma branch a partir da `main` seguindo o padrão `feat/issue-XX-descricao` ou `fix/issue-XX-descricao`.
 3. **Padrão de Commits:** Utilize *Conventional Commits* (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `ci:`).
-4. **Pull Requests (PRs):** Abra um PR referenciando a Issue (`Closes #XX`), garanta que `./gradlew build test` está passando na **CI (GitHub Actions)** e solicite **1 Code Review** antes do *Squash and Merge*.
+4. **Pull Requests (PRs):** Abra um PR referenciando a Issue (`Closes #XX`), garanta que `./gradlew check test` está passando na **CI (GitHub Actions)** e solicite **1 Code Review** antes do *Squash and Merge*.

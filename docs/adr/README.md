@@ -2,7 +2,7 @@
 
 > **Projeto:** Escala Elderly — API REST & Motor de Regras de Escala  
 > **Repositório:** [`escala-elderly-backend`](https://github.com/thomasalmeida09/escala-elderly-backend) (Backend Java / Spring Boot)  
-> **Última Atualização:** 24 de Outubro de 2026  
+> **Última Atualização:** 10 de Novembro de 2026  
 
 Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, divididas em **2 Grupos**:
 1. **Grupo 1 — Decisões Já Tomadas no Projeto (V1.0):** O que já foi implementado no repositório inicial, **o porquê (motivação)** e os **trade-offs (vantagens vs. custos/dívidas técnicas)**.
@@ -92,33 +92,43 @@ Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, di
 ---
 
 ### 🗳️ ADR-BE-007: Padrão de Formatação de Código e Convenções Java
+- **Status:** `ACEITA / IMPLEMENTADA`
+- **Onde está no código:** [`escala-elderly-api/build.gradle`](../../escala-elderly-api/build.gradle), [`.editorconfig`](../../.editorconfig), [`.gitattributes`](../../.gitattributes) e [`.gitignore`](../../.gitignore).
 - **Pergunta:** *"Qual o padrão de formatação do código no Backend?"*
 - **Decisão:**
-  1. **Formatador Automático:** Adotar o plugin **Spotless (`com.diffplug.spotless`)** com **Google Java Format (AOSP / 4 espaços de indentação)** no `build.gradle`:
-     - Para formatar antes de commitar: `./gradlew spotlessApply`
-     - Para verificar na pipeline de CI: `./gradlew spotlessCheck`
-  2. **EditorConfig (`.editorconfig`):** `charset = utf-8`, `end_of_line = lf`, `indent_size = 4`.
+  1. **Formatador Automático:** Adotar o plugin **Spotless (`com.diffplug.spotless:8.10.4`)** com **Google Java Format `1.22.0` (modo `.aosp()` / 4 espaços de indentação, `LineEnding.UNIX`, `UTF-8`)** no `build.gradle`:
+     - Para formatar antes de commitar: `./gradlew spotlessApply` (ou `.\gradlew.bat spotlessApply` no Windows)
+     - Para verificar localmente e na pipeline de CI: `./gradlew spotlessCheck` (acoplado automaticamente ao `./gradlew check`)
+  2. **EditorConfig & GitAttributes (`.editorconfig` / `.gitattributes`):** `charset = utf-8` (sem BOM), `end_of_line = lf`, `indent_size = 4` para Java/Gradle e `2` para YAML/JSON/Markdown.
   3. **Convenções Java:**
      - Classes em `PascalCase` (`CuidadorController`, `CuidadorService`), métodos e variáveis em `camelCase` (`listarCuidadores`, `atualizarStatus`);
-     - Separar responsabilidades em pacotes claros (`controller`, `service`, `model`, `dto`).
+     - Separar responsabilidades em pacotes/classes claras mantendo os comentários didáticos essenciais (`ADR-BE-004`).
 
 ---
 
-### 🗳️ ADR-BE-008: Continuous Integration (CI) no Backend com GitHub Actions
+### 🗳️ ADR-BE-008: Continuous Integration (CI) & Portaria de Segurança/LGPD no Backend com GitHub Actions
+- **Status:** `ACEITA / IMPLEMENTADA`
+- **Onde está no código:** [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) e [`.github/ruleset-main-protection.json`](../../.github/ruleset-main-protection.json).
 - **Pergunta:** *"Como vai funcionar o Continuous Integration?"*
-- **Decisão:** Configurar `.github/workflows/ci.yml` executando em todo `push` e `pull_request` para a `main`:
-  1. Setup do **JDK 17 (Eclipse Temurin)** com cache automático do Gradle;
-  2. Execução de `./gradlew build test` dentro de `./escala-elderly-api`.
-- **Motivação & Trade-off:** Garante que nenhum commit com erro de compilação (como chaves faltantes ou imports ausentes) ou teste quebrado possa ser mergeado na `main`.
+- **Decisão:** Configurar `.github/workflows/ci.yml` (`ubuntu-24.04`, `permissions: contents: read`, Actions fixadas por SHA de 40 caracteres em runtime Node 24) executando 2 jobs obrigatórios em todo `push` e `pull_request` para a `main`:
+  1. **`Java 17 Spring Boot Compile, Audit & JUnit 5 Gate` (`backend-ci`):**
+     - Setup do **JDK 17 (Eclipse Temurin)** com cache do Gradle (`gradle/actions/setup-gradle@v6.4.1`) em `./escala-elderly-api`;
+     - Auditoria estática *Broken-Windows* bloqueando blocos `catch {}` vazios;
+     - Verificação explícita de formatação `./gradlew spotlessCheck --no-daemon` seguida de compilação e testes JUnit 5 `./gradlew check test -x spotlessCheck --no-daemon --warning-mode=all`.
+  2. **`Secret, Credential & LGPD Clean-Room Hygiene Gate` (`clean-room-security`):**
+     - Bloqueio determinístico de BOM UTF-8 (`0xEF 0xBB 0xBF`), arquivos `.env`, senhas hardcoded em `application.properties`, chaves privadas/tokens, PDFs de referência e vazamentos de CPF/CNPJ ou e-mails reais fora da RFC 2606 (`@example.com`).
+- **Motivação & Trade-off:** Garante que nenhum commit com erro de compilação, formatação divergente, teste quebrado ou vazamento de segredos/PII LGPD possa ser mergeado na `main`.
 
 ---
 
 ### 🗳️ ADR-BE-009: Governança de Branches, Commits e Pull Requests (PRs)
+- **Status:** `ACEITA / IMPLEMENTADA`
+- **Onde está no código:** [`.github/pull_request_template.md`](../../.github/pull_request_template.md), [`.github/CODEOWNERS`](../../.github/CODEOWNERS) e [`.github/ruleset-main-protection.json`](../../.github/ruleset-main-protection.json).
 - **Pergunta:** *"Como vão ser os PRs?"*
 - **Decisão:**
-  1. **Branch `main` Protegida:** Toda alteração é desenvolvida em branch dedicada (`fix/issue-01-compilacao`, `feat/issue-02-endpoints-status`).
-  2. **Conventional Commits:** `feat(api): ...`, `fix(api): ...`, `docs(adr): ...`, `test(api): ...`, `ci(gradle): ...`.
-  3. **Critérios para Merge:** Template de PR preenchido (`Closes #Número`) + **CI Verde (`./gradlew build test` passando)** + **1 Aprovação (Code Review)** + **Squash and Merge**.
+  1. **Branch `main` Protegida (Ruleset):** Toda alteração é desenvolvida em branch dedicada (`fix/issue-01-...`, `feat/issue-02-...`), bloqueando *force-pushes* e exigindo histórico linear.
+  2. **Conventional Commits & Fowler's Two Hats:** `feat(api): ...`, `fix(api): ...`, `docs(adr): ...`, `test(api): ...`, `ci(backend): ...`, `style(api): ...`.
+  3. **Critérios para Merge:** Template de PR preenchido (`Closes #Número`) + **2 Checks da CI Verdes (`backend-ci` e `clean-room-security`)** + **1 Aprovação (Code Review roteado via `CODEOWNERS`)** + **Squash and Merge**.
 
 ---
 
