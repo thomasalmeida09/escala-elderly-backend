@@ -73,7 +73,7 @@ jobs:
       - name: Block UTF-8 BOM in tracked text files (Windows PowerShell 5.1 guard)
         run: |
           echo "Scanning all tracked text files for UTF-8 BOM (0xEF 0xBB 0xBF)..."
-          bom_files=$(git ls-files | grep -vE '\.(jar|png|jpg|jpeg|gif|ico|pdf)$' | LC_ALL=C xargs grep -l $'^\xef\xbb\xbf' 2>/dev/null || true)
+          bom_files=$(git ls-files -z | grep -zvE '\.(jar|png|jpg|jpeg|gif|ico|pdf)$' | LC_ALL=C xargs -0 grep -l $'^\xef\xbb\xbf' 2>/dev/null || true)
           if [ -n "$bom_files" ]; then
             echo "::error title=UTF-8 BOM Detected::UTF-8 BOM (0xEF 0xBB 0xBF) detected in: $bom_files. Save files as UTF-8 without BOM (avoid PowerShell 5.1 'Set-Content -Encoding UTF8')."
             exit 1

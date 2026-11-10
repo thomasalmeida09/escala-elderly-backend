@@ -49,8 +49,7 @@ escala-elderly-backend/
 │   │   │   ├── CuidadorController.java                # Endpoints REST (/api/cuidadores) com CORS
 │   │   │   └── Cuidador.java                          # Modelo de domínio serializado via Jackson
 │   │   └── test/java/escala_elderly_api/
-│   │       ├── CuidadorControllerTest.java            # Testes de contrato REST e CORS (MockMvc)
-│   │       └── EscalaElderlyApiApplicationTests.java  # Smoke test do contexto Spring Boot (JUnit 5)
+│   │       └── EscalaElderlyApiApplicationTests.java  # Testes JUnit 5 (Contexto, Contrato REST & CORS MockMvc)
 │   ├── build.gradle                                   # Spring WebMVC, Java 17 Toolchain & Spotless (AOSP)
 │   └── gradlew / gradlew.bat                          # Gradle Wrapper (9.5.1)
 ├── .editorconfig                                      # Padrão de indentação, UTF-8 sem BOM e LF
