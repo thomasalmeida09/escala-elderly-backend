@@ -3,7 +3,7 @@
 ![Java](https://img.shields.io/badge/Java-17_LTS-ED8B00?logo=openjdk&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-4.1.0-6DB33F?logo=springboot&logoColor=white)
 ![Gradle](https://img.shields.io/badge/Gradle-Wrapper-02303A?logo=gradle&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Sprint_1_(Fundação)-success)
+![Status](https://img.shields.io/badge/Status-Sprint_3_(Evolução_Completa)-success)
 
 API RESTful responsável pelo gerenciamento de estado dos cuidadores, plantões e alertas operacionais do ecossistema **Escala Elderly**.
 
@@ -36,11 +36,11 @@ escala-elderly-backend/
 │   ├── workflows/
 │   │   └── ci.yml                                            # Pipeline CI Dual-Job (Spotless, JUnit, Anti-BOM & LGPD)
 │   ├── CODEOWNERS                                            # Roteamento automático de Code Review (@thomasalmeida09 @augustoheiss)
-│   ├── pull_request_template.md                              # Checklist de PR alinhado 1:1 às ADR-BE-001..011
+│   ├── pull_request_template.md                              # Checklist de PR alinhado 1:1 às ADR-BE-001..012
 │   └── ruleset-main-protection.json                          # Definição auditável de proteção da branch main
 ├── docs/
 │   └── adr/
-│       ├── README.md                                         # Catálogo de ADRs do Backend e Governança (ADR-BE-001..011)
+│       ├── README.md                                         # Catálogo de ADRs do Backend e Governança (ADR-BE-001..012)
 │       └── QUADRO-KANBAN-SPRINTS.md                          # Divisão das Issues por Sprints e Colunas
 ├── escala-elderly-api/
 │   ├── src/
@@ -89,7 +89,7 @@ escala-elderly-backend/
 | `PATCH` | `/api/cuidadores/{id}/status` | Atualiza status estrito (`Presente`, `Faltou`, `Folga`, `Cobertura`) e higieniza `substituto` | Implementado ([Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2) & [Issue #4](https://github.com/thomasalmeida09/escala-elderly-backend/issues/4)) |
 | `POST` | `/api/cuidadores/batch` | Sincroniza atomicamente lote CSV com sanitização OWASP anti-CSV Injection e telefone E.164/DDD | Implementado ([Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2) & [Issue #4](https://github.com/thomasalmeida09/escala-elderly-backend/issues/4)) |
 | `POST` | `/api/cuidadores/reset` | Restaura instantaneamente a escala inicial canônica de demonstração | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
-| `GET` | `/api/cuidadores/stream` | Stream de atualização em tempo real via Server-Sent Events (SSE) | Sprint 3 ([Issue #3](https://github.com/thomasalmeida09/escala-elderly-backend/issues/3)) |
+| `GET` | `/api/cuidadores/stream` | Stream em tempo real via Server-Sent Events (`SCHEDULE_UPDATED`, `:heartbeat` e isolamento LGPD `?privacy=true`) | Implementado (Sprint 3 — [Issue #3](https://github.com/thomasalmeida09/escala-elderly-backend/issues/3)) |
 
 ---
 
@@ -140,9 +140,13 @@ curl -s -X PATCH http://localhost:8080/api/cuidadores/3/status \
 
 # Restaurar os 4 cuidadores iniciais em 1 clique
 curl -s -X POST http://localhost:8080/api/cuidadores/reset
+
+# Escutar atualizações em tempo real via SSE (visão completa ou Mural Público LGPD — ADR-BE-012)
+curl -N http://localhost:8080/api/cuidadores/stream
+curl -N "http://localhost:8080/api/cuidadores/stream?privacy=true"
 ```
 
-> 🔒 **Configuração de CORS em Produção (`ADR-BE-001` & `ADR-BE-011`):** Por padrão, `escala.cors.allowed-origins=*` em `escala-elderly-api/src/main/resources/application.properties` facilita o desenvolvimento local. Em produção/apresentação, defina origens explícitas separadas por vírgula (ex.: `escala.cors.allowed-origins=http://localhost:5173,https://escala.example.com`).
+> 🔒 **Configuração de CORS e Tempo Real SSE em Produção (`ADR-BE-001`, `ADR-BE-011` & `ADR-BE-012`):** Em `escala-elderly-api/src/main/resources/application.properties`, `escala.cors.allowed-origins=*` facilita o desenvolvimento local (em produção defina origens explícitas como `http://localhost:5173,https://escala.example.com`) e as propriedades `escala.sse.timeout-ms=1800000`, `escala.sse.max-subscribers=256`, `escala.sse.retry-ms=3000` e `escala.sse.heartbeat-ms=25000` governam o ciclo de vida das conexões SSE.
 
 ---
 

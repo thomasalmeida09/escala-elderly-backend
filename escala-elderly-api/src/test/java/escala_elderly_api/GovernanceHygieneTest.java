@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Fitness Functions arquiteturais que blindam paridade 1:1 da arvore de README.md, integridade
- * referencial das ADR-BE-001..011, invariantes da esteira CI e higiene Clean-Room/LGPD.
+ * referencial das ADR-BE-001..012, invariantes da esteira CI e higiene Clean-Room/LGPD.
  */
 class GovernanceHygieneTest {
 
@@ -134,7 +134,7 @@ class GovernanceHygieneTest {
 
     @Test
     @DisplayName(
-            "2. Garante integridade referencial das ADR-BE-001..011 em docs/adr, README e PR Template")
+            "2. Garante integridade referencial das ADR-BE-001..012 em docs/adr, README e PR Template")
     void deveGarantirIntegridadeReferencialDasAdrs() throws IOException {
         Path repoRoot = resolveRepoRoot();
         String adrCatalog = readUtf8(repoRoot.resolve("docs/adr/README.md"));
@@ -159,7 +159,8 @@ class GovernanceHygieneTest {
                         "ADR-BE-008",
                         "ADR-BE-009",
                         "ADR-BE-010",
-                        "ADR-BE-011");
+                        "ADR-BE-011",
+                        "ADR-BE-012");
         assertEquals(expectedAdrs, headings);
 
         // Autoteste contra tokens invalidos
@@ -242,7 +243,7 @@ class GovernanceHygieneTest {
 
         try (Stream<Path> walk = Files.walk(repoRoot.resolve("escala-elderly-api/src"))) {
             List<Path> arquivos = walk.filter(Files::isRegularFile).toList();
-            assertTrue(arquivos.size() >= 18);
+            assertTrue(arquivos.size() >= 20);
 
             for (Path arquivo : arquivos) {
                 String rel = repoRoot.relativize(arquivo).toString().replace('\\', '/');
