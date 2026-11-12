@@ -52,6 +52,8 @@ escala-elderly-backend/
 │   │   │   │   ├── CuidadorService.java                      # Motor MVCC lock-free (AtomicReference<List<Cuidador>>)
 │   │   │   │   ├── Cuidador.java                             # Entidade imutável canônica (@JsonInclude NON_NULL)
 │   │   │   │   ├── StatusCuidador.java                       # Política dos 4 status válidos (Presente, Faltou, Folga, Cobertura)
+│   │   │   │   ├── CsvSanitizer.java                         # Higienização em ponto fixo anti-CSV Injection e telefone E.164
+│   │   │   │   ├── LgpdPrivacyMasker.java                    # Pseudonimização read-time PT-BR e máscara de contato LGPD
 │   │   │   │   ├── StatusUpdateRequest.java                  # Record DTO para PATCH /api/cuidadores/{id}/status
 │   │   │   │   ├── CuidadorBatchItem.java                    # Record DTO para POST /api/cuidadores/batch
 │   │   │   │   ├── CuidadorNotFoundException.java            # Exceção de domínio 404 (CUIDADOR_NOT_FOUND)
@@ -64,6 +66,7 @@ escala-elderly-backend/
 │   │       └── java/escala_elderly_api/
 │   │           ├── EscalaElderlyApiApplicationTests.java     # Testes integrados MockMvc (Contrato, PATCH/POST, Erros & CORS)
 │   │           ├── CuidadorServiceTest.java                  # Testes unitários de estado, lotes e barreira CyclicBarrier (24 threads)
+│   │           ├── SecurityAndLgpdPolicyTest.java            # Testes unitários de CsvSanitizer (OWASP/E.164) e LgpdPrivacyMasker
 │   │           └── GovernanceHygieneTest.java                # Fitness Functions (paridade README 1:1, ADRs, CI & Clean-Room LGPD)
 │   ├── build.gradle                                          # Spring WebMVC, Java 17 Toolchain & Spotless (AOSP)
 │   ├── settings.gradle                                       # Definição do módulo Gradle escala-elderly-api
