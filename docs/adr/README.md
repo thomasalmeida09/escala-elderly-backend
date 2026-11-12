@@ -2,7 +2,7 @@
 
 > **Projeto:** Escala Elderly — API REST & Motor de Regras de Escala  
 > **Repositório:** [`escala-elderly-backend`](https://github.com/thomasalmeida09/escala-elderly-backend) (Backend Java / Spring Boot)  
-> **Última Atualização:** 10 de Novembro de 2026  
+> **Última Atualização:** 11 de Novembro de 2026  
 
 Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, divididas em **2 Grupos**:
 1. **Grupo 1 — Decisões Já Tomadas no Projeto (V1.0):** O que já foi implementado no repositório inicial, **o porquê (motivação)** e os **trade-offs (vantagens vs. custos/dívidas técnicas)**.
@@ -22,13 +22,13 @@ Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, di
 
 ### 📌 ADR-BE-001: Arquitetura REST API Desacoplada com CORS Habilitado e Erros Uniformes
 - **Status:** `ACEITA / IMPLEMENTADA`
-- **Onde está no código:** [`CuidadorController.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorController.java), [`WebApiConfig.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/WebApiConfig.java) e [`ApiExceptionHandler.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/ApiExceptionHandler.java).
-- **Decisão:** Expor o Backend como uma API RESTful independente na porta `8080` (`@RestController`) com `@CrossOrigin` explícito (`GET, POST, PATCH, OPTIONS`), `CorsFilter` na camada de *Servlet Filter* para todo o prefixo `/api/**` (garantindo cabeçalhos CORS inclusive em respostas `404`/`405`/`415`) e envelope padronizado de erro `ApiErrorResponse` (`code`, `message`, `path`, `timestamp`) para consumo direto pela SPA React (`localhost:5173`).
+- **Onde está no código:** [`CuidadorController.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorController.java), [`WebApiConfig.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/WebApiConfig.java), [`application.properties`](../../escala-elderly-api/src/main/resources/application.properties) e [`ApiExceptionHandler.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/ApiExceptionHandler.java).
+- **Decisão:** Expor o Backend como uma API RESTful independente na porta `8080` (`@RestController`) com política CORS centralizada no `CorsFilter` de `WebApiConfig` para todo o prefixo `/api/**` (parametrizada via `escala.cors.allowed-origins` em `application.properties`, substituindo o `@CrossOrigin` fixo inicial do controller e garantindo cabeçalhos CORS inclusive em respostas `404`/`405`/`415`) e envelope padronizado de erro `ApiErrorResponse` (`code`, `message`, `path`, `timestamp`) para consumo direto pela SPA React (`localhost:5173`).
 - **Por quê (Motivação):**
   - Separar responsabilidades entre a camada de apresentação (React) e a camada de regras/dados (Java), permitindo evolução independente, preflight `OPTIONS` determinístico em mutações `PATCH`/`POST` e diagnóstico claro de erros via navegador, Postman ou cURL.
 - **Trade-offs (Vantagens vs. Custos Assumidos):**
-  - ✅ **Vantagens:** Integração imediata sem bloqueio de CORS em ambiente de desenvolvimento; arquitetura limpa cliente-servidor sem vazamento de *stack traces*.
-  - ⚠️ **Custos / Cuidados:** Em produção/apresentação final, as origens permitidas de CORS devem ser parametrizáveis via `application.properties` (previsto na **Issue #4**).
+  - ✅ **Vantagens:** Integração imediata sem bloqueio de CORS em ambiente de desenvolvimento e restrição explícita `403 Forbidden` para origens não autorizadas em produção; arquitetura limpa cliente-servidor sem vazamento de *stack traces*.
+  - ✅ **Dívida Técnica Quitada na Issue #4 (`ADR-BE-011`):** As origens permitidas de CORS foram externalizadas em `escala.cors.allowed-origins` (`application.properties`), com normalização automática de barras finais `/` e validação *fail-fast* de esquema `http(s)://`.
 
 ---
 
@@ -148,3 +148,17 @@ Este documento registra as **Decisões Arquiteturais (ADRs)** do **Backend**, di
     ]
     ```
   - Manter a persistência ativa em um `CuidadorService` *thread-safe* baseado em snapshot imutável MVCC (`AtomicReference<List<Cuidador>>`), expondo leituras *lock-free* em $O(1)$ (`GET /api/cuidadores`) e mutações atômicas *All-or-Nothing* (`PATCH /api/cuidadores/{id}/status`, `POST /api/cuidadores/batch` com Auto-ID monotônico `maxExplicitId + 1` e `POST /api/cuidadores/reset`), rodando instantaneamente com `./gradlew bootRun` sem exigir banco de dados externo.
+
+---
+
+### 🗳️ ADR-BE-011: Proteção de Dados LGPD Read-Time (`?privacy=true`), Sanitização OWASP CSV Injection e CORS Parametrizável
+- **Status:** `ACEITA / IMPLEMENTADA`
+- **Onde está no código:** [`LgpdPrivacyMasker.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/LgpdPrivacyMasker.java), [`CsvSanitizer.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CsvSanitizer.java), [`CuidadorService.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorService.java), [`CuidadorController.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/CuidadorController.java), [`WebApiConfig.java`](../../escala-elderly-api/src/main/java/escala_elderly_api/WebApiConfig.java) e [`application.properties`](../../escala-elderly-api/src/main/resources/application.properties).
+- **Decisão:**
+  1. **Projeção LGPD *Read-Time* (`GET /api/cuidadores?privacy=true`):** Implementar em `LgpdPrivacyMasker` a minimização e pseudonimização em tempo de leitura (Lei nº 13.709/2018 — Art. 6º III/VII e Art. 13) sem jamais mutar o snapshot canônico MVCC (`snapshotRef`). Nomes civis e `substituto` são abreviados em paridade 1:1 com o Frontend (`"Carlos Rocha"` $\rightarrow$ `"Carlos R."`, `"João da Conceição"` $\rightarrow$ `"João C."`, normalização Unicode `NFC` e suporte a partículas PT-BR `da/de/do/das/dos/e`), `telefone` não-nulo é mascarado como `"(••) •••••-••••"` (zero dígitos expostos) e `horasDescanso` é preservado para não desarmar a trava de fadiga interjornada (`< 11h`, Art. 66 da CLT). O validador estrito bloqueia coerções frouxas (`?privacy=1`, `?privacy=`) e *HTTP Parameter Pollution* (`?privacy=false&privacy=true`) com `400 INVALID_PAYLOAD`.
+  2. **Sanitização Iterativa em Ponto Fixo contra OWASP CSV Formula Injection (CWE-1236):** Isolar em `CsvSanitizer` a purga de invisíveis Unicode/BOM (`\uFEFF`, `\u200B..\u200F`, bidi), normalização de separadores de linha (`\r`, `\n`, `\t`, `\u0085`, `\u2028`, `\u2029`) para espaço único e remoção iterativa de gatilhos iniciais (`=`, `+`, `-`, `@`, `|`, `'`, homóglifos fullwidth) em `POST /api/cuidadores/batch` e `PATCH /api/cuidadores/{id}/status`, mantendo `status` estritamente não-sanitizado (`"=Presente"` $\rightarrow$ `400 INVALID_STATUS`) e preservando gramática simétrica de `telefone` (`+55` ITU-T E.164, DDD entre parênteses `(11) 90000-0010` e sufixos `ramal`/`ext`/`#`).
+  3. **CORS Centralizado e Parametrizável (`escala.cors.allowed-origins`):** Remover `@CrossOrigin` fixo do controller e parametrizar o `CorsFilter` de `WebApiConfig` via `application.properties` (default `*` em desenvolvimento; lista explícita com remoção de barra final `/` e rejeição `403 Forbidden` para origens não autorizadas em produção, quitando a dívida registrada em `ADR-BE-001`).
+- **Motivação & Trade-offs:**
+  - ✅ **Vantagens:** Segurança em profundidade e conformidade LGPD em murais de enfermagem com `0` dependências novas no `build.gradle`, mantendo leituras normais `privacy=false` em $O(1)$ *lock-free* e 100% de compatibilidade com `parseCuidadorList` e `csvScheduleCodec.ts` do Frontend.
+  - ⚠️ **Custos / Cuidados:** Sob `?privacy=true`, uma lista imutável projetada é alocada por requisição ($O(N)$ para $N \le 500$ cuidadores, microssegundos em memória), preservando intacto o estado canônico compartilhado.
+

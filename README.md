@@ -36,11 +36,11 @@ escala-elderly-backend/
 │   ├── workflows/
 │   │   └── ci.yml                                            # Pipeline CI Dual-Job (Spotless, JUnit, Anti-BOM & LGPD)
 │   ├── CODEOWNERS                                            # Roteamento automático de Code Review (@thomasalmeida09 @augustoheiss)
-│   ├── pull_request_template.md                              # Checklist de PR alinhado 1:1 às ADR-BE-001..010
+│   ├── pull_request_template.md                              # Checklist de PR alinhado 1:1 às ADR-BE-001..011
 │   └── ruleset-main-protection.json                          # Definição auditável de proteção da branch main
 ├── docs/
 │   └── adr/
-│       ├── README.md                                         # Catálogo de ADRs do Backend e Governança (ADR-BE-001..010)
+│       ├── README.md                                         # Catálogo de ADRs do Backend e Governança (ADR-BE-001..011)
 │       └── QUADRO-KANBAN-SPRINTS.md                          # Divisão das Issues por Sprints e Colunas
 ├── escala-elderly-api/
 │   ├── src/
@@ -83,9 +83,9 @@ escala-elderly-backend/
 
 | Método | Rota | Descrição | Status |
 | :---: | :--- | :--- | :---: |
-| `GET` | `/api/cuidadores` | Lista todos os cuidadores alinhados ao Frontend (`id: 3 = Carlos Rocha`) | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
-| `PATCH` | `/api/cuidadores/{id}/status` | Atualiza o status (`Presente`, `Faltou`, `Folga`, `Cobertura`) e `substituto` opcional | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
-| `POST` | `/api/cuidadores/batch` | Sincroniza atomicamente lote de cuidadores importados via planilha CSV | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
+| `GET` | `/api/cuidadores` | Lista cuidadores alinhados ao Frontend (`id: 3 = Carlos Rocha`) ou projeção LGPD (`?privacy=true`) | Implementado ([Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2) & [Issue #4](https://github.com/thomasalmeida09/escala-elderly-backend/issues/4)) |
+| `PATCH` | `/api/cuidadores/{id}/status` | Atualiza status estrito (`Presente`, `Faltou`, `Folga`, `Cobertura`) e higieniza `substituto` | Implementado ([Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2) & [Issue #4](https://github.com/thomasalmeida09/escala-elderly-backend/issues/4)) |
+| `POST` | `/api/cuidadores/batch` | Sincroniza atomicamente lote CSV com sanitização OWASP anti-CSV Injection e telefone E.164/DDD | Implementado ([Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2) & [Issue #4](https://github.com/thomasalmeida09/escala-elderly-backend/issues/4)) |
 | `POST` | `/api/cuidadores/reset` | Restaura instantaneamente a escala inicial canônica de demonstração | Implementado (Sprint 1 — [Issue #2](https://github.com/thomasalmeida09/escala-elderly-backend/issues/2)) |
 | `GET` | `/api/cuidadores/stream` | Stream de atualização em tempo real via Server-Sent Events (SSE) | Sprint 3 ([Issue #3](https://github.com/thomasalmeida09/escala-elderly-backend/issues/3)) |
 
@@ -120,8 +120,11 @@ cd escala-elderly-api
 A API responderá em **`http://localhost:8080/api/cuidadores`**. Exemplos rápidos de teste via `curl`:
 
 ```bash
-# Listar escala ativa
+# Listar escala ativa (visão completa de gestão)
 curl -s http://localhost:8080/api/cuidadores
+
+# Listar escala em Modo Mural Público LGPD (sobrenomes abreviados e telefones mascarados — ADR-BE-011)
+curl -s "http://localhost:8080/api/cuidadores?privacy=true"
 
 # Registrar falta de Carlos Rocha (id = 3)
 curl -s -X PATCH http://localhost:8080/api/cuidadores/3/status \
@@ -136,6 +139,8 @@ curl -s -X PATCH http://localhost:8080/api/cuidadores/3/status \
 # Restaurar os 4 cuidadores iniciais em 1 clique
 curl -s -X POST http://localhost:8080/api/cuidadores/reset
 ```
+
+> 🔒 **Configuração de CORS em Produção (`ADR-BE-001` & `ADR-BE-011`):** Por padrão, `escala.cors.allowed-origins=*` em `escala-elderly-api/src/main/resources/application.properties` facilita o desenvolvimento local. Em produção/apresentação, defina origens explícitas separadas por vírgula (ex.: `escala.cors.allowed-origins=http://localhost:5173,https://escala.example.com`).
 
 ---
 
