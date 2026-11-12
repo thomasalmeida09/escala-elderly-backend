@@ -103,6 +103,17 @@ public class WebApiConfig {
                 throw new IllegalArgumentException(
                         "Host ausente na origem CORS configurada: '" + origem + "'.");
             }
+            boolean possuiComponentesProibidos =
+                    (uri.getRawPath() != null && !uri.getRawPath().isEmpty())
+                            || uri.getRawQuery() != null
+                            || uri.getRawFragment() != null
+                            || uri.getRawUserInfo() != null;
+            if (possuiComponentesProibidos) {
+                throw new IllegalArgumentException(
+                        "Origem CORS deve conter apenas scheme://host[:port] segundo a RFC 6454: '"
+                                + origem
+                                + "'.");
+            }
         } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException(
                     "Origem CORS malformada em escala.cors.allowed-origins: '" + origem + "'.", ex);

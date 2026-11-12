@@ -195,6 +195,22 @@ class SecurityAndLgpdPolicyTest {
         assertEquals("", LgpdPrivacyMasker.mascararNomePessoa(null));
         assertEquals("", LgpdPrivacyMasker.mascararNomePessoa("   "));
 
+        // C1: Fechamento algebrico MAX_TEXT_LENGTH = 120 (surrogate-safe) quando sobrenome tem 1
+        // caractere
+        String nomeFronteira120 = "A".repeat(118) + " B";
+        assertEquals(120, nomeFronteira120.length());
+        String mascaradoFronteira120 = LgpdPrivacyMasker.mascararNomePessoa(nomeFronteira120);
+        assertEquals(120, mascaradoFronteira120.length());
+        assertEquals("A".repeat(117) + " B.", mascaradoFronteira120);
+
+        // Par substituto UTF-16 na posicao de corte (indice 116..117) jamais e partido ao meio
+        String nomeSurrogateFronteira = "A".repeat(116) + "\uD835\uDC00 B";
+        assertEquals(120, nomeSurrogateFronteira.length());
+        String mascaradoSurrogate = LgpdPrivacyMasker.mascararNomePessoa(nomeSurrogateFronteira);
+        assertTrue(mascaradoSurrogate.length() <= CuidadorService.MAX_TEXT_LENGTH);
+        assertEquals("A".repeat(116) + " B.", mascaradoSurrogate);
+        assertFalse(Character.isHighSurrogate(mascaradoSurrogate.charAt(115)));
+
         assertNull(LgpdPrivacyMasker.mascararTelefone(null));
         assertNull(LgpdPrivacyMasker.mascararTelefone("   "));
         String telMascarado = LgpdPrivacyMasker.mascararTelefone("+55 11 90000-0010");
