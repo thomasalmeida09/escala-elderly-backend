@@ -238,30 +238,48 @@ public class CuidadorSseBroadcaster implements DisposableBean {
         emitter.onError(ex -> removerEEncerrarAssinante(nova));
 
         List<SseSubscription> evictadas = new ArrayList<>();
+        boolean canceladoPorShutdown = false;
+        boolean deveDrenarExistentes = false;
         synchronized (stateAndRegistrationLock) {
-            if (ultimoEstadoConhecido == null
-                    || snapshotServico.versao() > ultimoEstadoConhecido.versao()) {
-                ultimoEstadoConhecido = snapshotServico;
-            }
-            while (assinantes.size() >= maxSubscribers) {
-                UUID idMaisAntigo = ordemChegada.pollFirst();
-                if (idMaisAntigo == null) {
-                    break;
+            if (encerrado.get()) {
+                canceladoPorShutdown = true;
+            } else {
+                if (ultimoEstadoConhecido == null
+                        || snapshotServico.versao() > ultimoEstadoConhecido.versao()) {
+                    ultimoEstadoConhecido = snapshotServico;
                 }
-                SseSubscription antiga = assinantes.remove(idMaisAntigo);
-                if (antiga != null) {
-                    antiga.encerrada = true;
-                    if (antiga.modoPrivacidade) {
-                        assinantesPrivacidadeAtivos.decrementAndGet();
+                while (assinantes.size() >= maxSubscribers) {
+                    UUID idMaisAntigo = ordemChegada.pollFirst();
+                    if (idMaisAntigo == null) {
+                        break;
                     }
-                    evictadas.add(antiga);
+                    SseSubscription antiga = assinantes.remove(idMaisAntigo);
+                    if (antiga != null) {
+                        antiga.encerrada = true;
+                        if (antiga.modoPrivacidade) {
+                            assinantesPrivacidadeAtivos.decrementAndGet();
+                        }
+                        evictadas.add(antiga);
+                    }
+                }
+                boolean haviaAssinantesAtivos = !assinantes.isEmpty();
+                assinantes.put(id, nova);
+                ordemChegada.addLast(id);
+                if (modoPrivacidade) {
+                    assinantesPrivacidadeAtivos.incrementAndGet();
+                }
+                if (haviaAssinantesAtivos && ultimoEstadoConhecido.versao() > ultimaVersaoDrenada) {
+                    deveDrenarExistentes = true;
+                } else if (!haviaAssinantesAtivos) {
+                    ultimaVersaoDrenada =
+                            Math.max(ultimaVersaoDrenada, ultimoEstadoConhecido.versao());
                 }
             }
-            assinantes.put(id, nova);
-            ordemChegada.addLast(id);
-            if (modoPrivacidade) {
-                assinantesPrivacidadeAtivos.incrementAndGet();
-            }
+        }
+
+        if (canceladoPorShutdown) {
+            encerrarEmitterComSeguranca(emitter);
+            return emitter;
         }
 
         for (SseSubscription antiga : evictadas) {
@@ -295,6 +313,9 @@ public class CuidadorSseBroadcaster implements DisposableBean {
         if (falhouEnvioInicial) {
             removerEEncerrarAssinante(nova);
         }
+        if (deveDrenarExistentes) {
+            agendarDrenagem();
+        }
 
         return emitter;
     }
@@ -309,18 +330,19 @@ public class CuidadorSseBroadcaster implements DisposableBean {
             return;
         }
 
-        boolean avancou;
+        boolean pendenteParaDrenar;
         synchronized (stateAndRegistrationLock) {
             if (ultimoEstadoConhecido == null
                     || novoSnapshot.versao() > ultimoEstadoConhecido.versao()) {
                 ultimoEstadoConhecido = novoSnapshot;
-                avancou = true;
-            } else {
-                avancou = false;
             }
+            pendenteParaDrenar =
+                    ultimoEstadoConhecido != null
+                            && novoSnapshot.versao() >= ultimoEstadoConhecido.versao()
+                            && ultimoEstadoConhecido.versao() > ultimaVersaoDrenada;
         }
 
-        if (!avancou || assinantes.isEmpty()) {
+        if (!pendenteParaDrenar || assinantes.isEmpty()) {
             return;
         }
         agendarDrenagem();
