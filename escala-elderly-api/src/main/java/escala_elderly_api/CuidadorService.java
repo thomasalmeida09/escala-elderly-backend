@@ -4,15 +4,18 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * Servico responsavel por guardar e atualizar o estado da escala em memoria de forma thread-safe
  * (ADR-BE-010).
  *
- * <p>Utiliza um snapshot imutavel (AtomicReference<List<Cuidador>>):
+ * <p>Utiliza um snapshot versionado imutavel (AtomicReference<SnapshotEscala>):
  *
  * <ul>
  *   <li>Leituras padrao (GET ?privacy=false) ocorrem em O(1) sem travas (lock-free) e nunca
@@ -20,8 +23,8 @@ import org.springframework.stereotype.Service;
  *   <li>Leituras publicas (GET ?privacy=true) constroem uma projecao imutavel mascarada via
  *       LgpdPrivacyMasker sem alterar o snapshot canonico em memoria.
  *   <li>Escritas (PATCH, POST /batch, POST /reset) higienizam entradas contra CSV Formula Injection
- *       (CsvSanitizer) e validam 100% dos invariantes antes de trocar a referencia atomicamente sob
- *       writeLock (Crash Early / Tudo-ou-Nada).
+ *       (CsvSanitizer), trocam a referencia versionada atomicamente sob writeLock (Crash Early /
+ *       Tudo-ou-Nada) e notificam o CuidadorSseBroadcaster fora da regiao critica.
  * </ul>
  */
 @Service
@@ -36,8 +39,37 @@ public class CuidadorService {
     public static final int MAX_REST_HOURS = 720;
 
     private final Object writeLock = new Object();
-    private final AtomicReference<List<Cuidador>> snapshotRef =
-            new AtomicReference<>(criarEscalaInicialPadrao());
+    private final CuidadorSseBroadcaster sseBroadcaster;
+    private final AtomicReference<CuidadorSseBroadcaster.SnapshotEscala> snapshotRef =
+            new AtomicReference<>(
+                    new CuidadorSseBroadcaster.SnapshotEscala(1L, criarEscalaInicialPadrao()));
+
+    /** Construtor padrao leve para testes unitarios sem container Spring (zero threads extras). */
+    public CuidadorService() {
+        this(CuidadorSseBroadcaster.padraoParaTestes());
+    }
+
+    /** Construtor principal gerenciado pelo Spring Boot com injecao explicita do hub SSE. */
+    @Autowired
+    public CuidadorService(CuidadorSseBroadcaster sseBroadcaster) {
+        this.sseBroadcaster =
+                Objects.requireNonNull(sseBroadcaster, "CuidadorSseBroadcaster nao pode ser nulo.");
+    }
+
+    /** Retorna o snapshot versionado (versao monotonica + lista imutavel) em O(1) lock-free. */
+    public CuidadorSseBroadcaster.SnapshotEscala obterSnapshotVersionado() {
+        return snapshotRef.get();
+    }
+
+    /** Registra um novo consumidor SSE enviando imediatamente o snapshot mais recente. */
+    public SseEmitter registrarAssinanteStream(boolean modoPrivacidade) {
+        return sseBroadcaster.registrarAssinante(snapshotRef.get(), modoPrivacidade);
+    }
+
+    /** Retorna o total atual de conexoes SSE ativas para diagnostico e testes de capacidade. */
+    public int contarAssinantesStreamAtivos() {
+        return sseBroadcaster.contarAssinantesAtivos();
+    }
 
     /** Retorna o snapshot imutavel canonico atual ordenado por ID crescente em O(1). */
     public List<Cuidador> listarCuidadores() {
@@ -49,13 +81,14 @@ public class CuidadorService {
      * LGPD (modoPrivacidade=true) sem mutar o estado em memoria.
      */
     public List<Cuidador> listarCuidadores(boolean modoPrivacidade) {
-        List<Cuidador> atual = snapshotRef.get();
+        List<Cuidador> atual = snapshotRef.get().cuidadores();
         return modoPrivacidade ? LgpdPrivacyMasker.projetarListaPublica(atual) : atual;
     }
 
     /**
      * Atualiza o status (e opcionalmente o substituto) de um cuidador especifico. Valida todas as
-     * pre-condicoes do chamador (400) antes de buscar o ID na escala (404).
+     * pre-condicoes do chamador (400) antes de buscar o ID na escala (404) e notifica o stream SSE
+     * fora do writeLock apenas em caso de sucesso.
      */
     public Cuidador atualizarStatus(Long id, StatusUpdateRequest request) {
         validarId(id, "id");
@@ -69,10 +102,13 @@ public class CuidadorService {
         String novoSubstituto =
                 normalizarSubstitutoPorStatus(novoStatus, request.substituto(), "substituto");
 
+        Cuidador atualizado = null;
+        CuidadorSseBroadcaster.SnapshotEscala proximoSnapshot;
+
         synchronized (writeLock) {
-            List<Cuidador> atual = snapshotRef.get();
+            CuidadorSseBroadcaster.SnapshotEscala snapshotAtual = snapshotRef.get();
+            List<Cuidador> atual = snapshotAtual.cuidadores();
             List<Cuidador> proximo = new ArrayList<>(atual.size());
-            Cuidador atualizado = null;
 
             for (Cuidador item : atual) {
                 if (item.getId().equals(id)) {
@@ -96,15 +132,19 @@ public class CuidadorService {
                 throw new CuidadorNotFoundException(id);
             }
 
-            snapshotRef.set(List.copyOf(proximo));
-            return atualizado;
+            proximoSnapshot =
+                    new CuidadorSseBroadcaster.SnapshotEscala(snapshotAtual.versao() + 1L, proximo);
+            snapshotRef.set(proximoSnapshot);
         }
+
+        sseBroadcaster.publicarAtualizacao(proximoSnapshot);
+        return atualizado;
     }
 
     /**
      * Substitui atomicamente a escala ativa por um lote validado e higienizado contra CSV Formula
      * Injection. Se qualquer item falhar na validacao, nenhum registro da escala anterior e
-     * alterado.
+     * alterado e nenhum evento SSE e emitido.
      */
     public List<Cuidador> sincronizarLote(List<CuidadorBatchItem> itens) {
         if (itens == null || itens.isEmpty()) {
@@ -194,19 +234,32 @@ public class CuidadorService {
         validados.sort(Comparator.comparingLong(Cuidador::getId));
         List<Cuidador> novoSnapshot = List.copyOf(validados);
 
+        CuidadorSseBroadcaster.SnapshotEscala proximoSnapshot;
         synchronized (writeLock) {
-            snapshotRef.set(novoSnapshot);
-            return novoSnapshot;
+            CuidadorSseBroadcaster.SnapshotEscala snapshotAtual = snapshotRef.get();
+            proximoSnapshot =
+                    new CuidadorSseBroadcaster.SnapshotEscala(
+                            snapshotAtual.versao() + 1L, novoSnapshot);
+            snapshotRef.set(proximoSnapshot);
         }
+
+        sseBroadcaster.publicarAtualizacao(proximoSnapshot);
+        return proximoSnapshot.cuidadores();
     }
 
     /** Restaura atomicamente os 4 cuidadores canonicos iniciais de demonstracao (ADR-BE-010). */
     public List<Cuidador> restaurarEscalaInicial() {
         List<Cuidador> inicial = criarEscalaInicialPadrao();
+        CuidadorSseBroadcaster.SnapshotEscala proximoSnapshot;
         synchronized (writeLock) {
-            snapshotRef.set(inicial);
-            return inicial;
+            CuidadorSseBroadcaster.SnapshotEscala snapshotAtual = snapshotRef.get();
+            proximoSnapshot =
+                    new CuidadorSseBroadcaster.SnapshotEscala(snapshotAtual.versao() + 1L, inicial);
+            snapshotRef.set(proximoSnapshot);
         }
+
+        sseBroadcaster.publicarAtualizacao(proximoSnapshot);
+        return proximoSnapshot.cuidadores();
     }
 
     private static List<Cuidador> criarEscalaInicialPadrao() {

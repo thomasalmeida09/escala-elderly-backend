@@ -518,4 +518,56 @@ class CuidadorServiceTest {
         assertEquals("Carlos Rocha", restaurado.get(2).getNome());
         assertEquals("Presente", restaurado.get(2).getStatus());
     }
+
+    @Test
+    @DisplayName(
+            "Snapshot versionado incrementa versao em PATCH/POST/reset e jamais incrementa nem publica em falhas 400/404 (S05, S06, S15)")
+    void deveVersionarSnapshotMonotonicamenteESilenciarBroadcastEmErros() {
+        List<Long> versoesPublicadas = new ArrayList<>();
+        CuidadorSseBroadcaster espiaoHub =
+                new CuidadorSseBroadcaster(
+                        tools.jackson.databind.json.JsonMapper.builder().build(),
+                        30_000L,
+                        16,
+                        3_000L,
+                        0L,
+                        Runnable::run,
+                        org.springframework.web.servlet.mvc.method.annotation.SseEmitter::new,
+                        LgpdPrivacyMasker::projetarListaPublica) {
+                    @Override
+                    public void publicarAtualizacao(SnapshotEscala novoSnapshot) {
+                        versoesPublicadas.add(novoSnapshot.versao());
+                        super.publicarAtualizacao(novoSnapshot);
+                    }
+                };
+
+        CuidadorService servicoComHub = new CuidadorService(espiaoHub);
+        assertEquals(1L, servicoComHub.obterSnapshotVersionado().versao());
+        assertEquals(0, servicoComHub.contarAssinantesStreamAtivos());
+
+        // Falhas 400 e 404 jamais incrementam versao nem notificam o hub SSE
+        assertThrows(
+                CuidadorNotFoundException.class,
+                () -> servicoComHub.atualizarStatus(999L, new StatusUpdateRequest("Faltou", null)));
+        assertThrows(
+                InvalidCuidadorPayloadException.class,
+                () -> servicoComHub.atualizarStatus(3L, new StatusUpdateRequest("Invalido", null)));
+        assertThrows(
+                InvalidCuidadorPayloadException.class,
+                () -> servicoComHub.sincronizarLote(List.of()));
+
+        assertEquals(1L, servicoComHub.obterSnapshotVersionado().versao());
+        assertEquals(List.of(), versoesPublicadas);
+
+        // Sucessos em PATCH, POST /batch e POST /reset incrementam 2, 3, 4
+        servicoComHub.atualizarStatus(3L, new StatusUpdateRequest("Faltou", null));
+        servicoComHub.sincronizarLote(
+                List.of(
+                        new CuidadorBatchItem(
+                                1L, "Ana Souza", "Presente", null, null, null, 12, null)));
+        servicoComHub.restaurarEscalaInicial();
+
+        assertEquals(List.of(2L, 3L, 4L), versoesPublicadas);
+        assertEquals(4L, servicoComHub.obterSnapshotVersionado().versao());
+    }
 }
