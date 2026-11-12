@@ -46,11 +46,16 @@ public class ApiExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ApiErrorResponse> tratarTipoDeParametroInvalido(
             MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
-        return construirResposta(
-                HttpStatus.BAD_REQUEST,
-                InvalidCuidadorPayloadException.CODE_INVALID_ID,
-                "Parametro de rota invalido: informe um identificador numerico inteiro positivo.",
-                request.getRequestURI());
+        boolean ehParametroId = "id".equals(ex.getName());
+        String codigo =
+                ehParametroId
+                        ? InvalidCuidadorPayloadException.CODE_INVALID_ID
+                        : InvalidCuidadorPayloadException.CODE_INVALID_PAYLOAD;
+        String mensagem =
+                ehParametroId
+                        ? "Parametro de rota invalido: informe um identificador numerico inteiro positivo."
+                        : "Parametro '" + ex.getName() + "' possui tipo ou formato invalido.";
+        return construirResposta(HttpStatus.BAD_REQUEST, codigo, mensagem, request.getRequestURI());
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

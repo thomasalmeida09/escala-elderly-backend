@@ -2,6 +2,8 @@ package escala_elderly_api;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
@@ -12,14 +14,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.lang.reflect.Method;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.core.MethodParameter;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -183,6 +192,206 @@ class EscalaElderlyApiApplicationTests {
 
     @Test
     @DisplayName(
+            "GET /api/cuidadores?privacy=true mascara nomes, substitutos e telefones preservando horasDescanso e sem mutar snapshot (S12, S13, S14, S15)")
+    void deveExporProjecaoLgpdEmModoPrivacidadeEBloquearQueryParamInvalidoOuHpp() throws Exception {
+        String loteComPiiSintetica =
+                """
+                [
+                  {
+                    "id": 3,
+                    "nome": "Carlos Rocha",
+                    "status": "Cobertura",
+                    "turno": "Noturno (19h-07h)",
+                    "quarto": "Quarto 03",
+                    "telefone": "+55 11 90000-0010",
+                    "horasDescanso": 8,
+                    "substituto": "João da Conceição"
+                  },
+                  {
+                    "id": 4,
+                    "nome": "Mariana Costa",
+                    "status": "Folga",
+                    "turno": "Diurno (07h-19h)",
+                    "quarto": "Quarto 04",
+                    "telefone": "(11) 90000-0011 ramal 12",
+                    "horasDescanso": 24
+                  }
+                ]
+                """;
+
+        mockMvc.perform(
+                        post("/api/cuidadores/batch")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(loteComPiiSintetica))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/cuidadores").param("privacy", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].id").value(3))
+                .andExpect(jsonPath("$[0].nome").value("Carlos R."))
+                .andExpect(jsonPath("$[0].substituto").value("João C."))
+                .andExpect(jsonPath("$[0].telefone").value("(••) •••••-••••"))
+                .andExpect(jsonPath("$[0].horasDescanso").value(8))
+                .andExpect(jsonPath("$[1].id").value(4))
+                .andExpect(jsonPath("$[1].nome").value("Mariana C."))
+                .andExpect(jsonPath("$[1].telefone").value("(••) •••••-••••"))
+                .andExpect(jsonPath("$[1].horasDescanso").value(24))
+                .andExpect(content().string(not(containsString("Rocha"))))
+                .andExpect(content().string(not(containsString("Conceição"))))
+                .andExpect(content().string(not(containsString("90000"))));
+
+        // Leitura subsequente com ?privacy=false ou sem parametro comprova snapshot intacto
+        mockMvc.perform(get("/api/cuidadores").param("privacy", "false"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].nome").value("Carlos Rocha"))
+                .andExpect(jsonPath("$[0].substituto").value("João da Conceição"))
+                .andExpect(jsonPath("$[0].telefone").value("+55 11 90000-0010"))
+                .andExpect(jsonPath("$[1].telefone").value("(11) 90000-0011 ramal 12"));
+
+        // S15: Rejeita ?privacy vazio, valores nao-booleanos e HTTP Parameter Pollution
+        for (String valorInvalido :
+                new String[] {"", "   ", "1", "0", "sim", "banana", "true,false"}) {
+            mockMvc.perform(get("/api/cuidadores").param("privacy", valorInvalido))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("INVALID_PAYLOAD"));
+        }
+
+        mockMvc.perform(get("/api/cuidadores?privacy=false&privacy=true"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PAYLOAD"));
+
+        mockMvc.perform(get("/api/cuidadores?privacy=true&privacy=true"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PAYLOAD"));
+    }
+
+    @Test
+    @DisplayName(
+            "POST /batch e PATCH /status higienizam CSV Injection, aceitam DDD entre parenteses/ramais e rejeitam formulas em status/telefone (S01..S08, S16)")
+    void deveHigienizarCsvInjectionEAplicarGramaticaSimetricaDeTelefoneEmHttp() throws Exception {
+        String loteHostilSanitizavel =
+                """
+                [
+                  {
+                    "id": 1,
+                    "nome": " =+=-@CMD|' /C calc'!A0",
+                    "status": "Cobertura",
+                    "turno": "\\t=Diurno (07h-19h)",
+                    "quarto": "---",
+                    "telefone": "(11) 3000-0106 ramal 12",
+                    "horasDescanso": 12,
+                    "substituto": "\\uFEFF=Folguista\\r\\nTurno A"
+                  },
+                  {
+                    "id": 2,
+                    "nome": "Ana\\u0085Souza",
+                    "status": "Folga",
+                    "turno": "Noturno (19h-07h)",
+                    "quarto": "Quarto 02",
+                    "telefone": "'+55 (11) 90000-0010",
+                    "horasDescanso": 24
+                  }
+                ]
+                """;
+
+        mockMvc.perform(
+                        post("/api/cuidadores/batch")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(loteHostilSanitizavel))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].nome").value("CMD|' /C calc'!A0"))
+                .andExpect(jsonPath("$[0].turno").value("Diurno (07h-19h)"))
+                .andExpect(jsonPath("$[0].quarto").doesNotExist())
+                .andExpect(jsonPath("$[0].telefone").value("(11) 3000-0106 ramal 12"))
+                .andExpect(jsonPath("$[0].substituto").value("Folguista Turno A"))
+                .andExpect(jsonPath("$[1].nome").value("Ana Souza"))
+                .andExpect(jsonPath("$[1].telefone").value("+55 (11) 90000-0010"));
+
+        // S04: PATCH tambem sanitiza substituto contra CSV Injection
+        mockMvc.perform(
+                        patch("/api/cuidadores/1/status")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"status\":\"Cobertura\",\"substituto\":\"=CMD()\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.substituto").value("CMD()"));
+
+        // S08: status com prefixo "=Presente" falha com 400 INVALID_STATUS (jamais sanitizado)
+        mockMvc.perform(
+                        patch("/api/cuidadores/1/status")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"status\":\"=Presente\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_STATUS"));
+
+        // S05 & S07: nome esvaziado e telefones com formula/notacao cientifica/mascara falham 400
+        for (String payloadInvalido :
+                new String[] {
+                    "[{\"id\":1,\"nome\":\"===++--\",\"status\":\"Presente\"}]",
+                    "[{\"id\":1,\"nome\":\"Ana Souza\",\"status\":\"Presente\",\"telefone\":\"+CMD()\"}]",
+                    "[{\"id\":1,\"nome\":\"Ana Souza\",\"status\":\"Presente\",\"telefone\":\"=HYPERLINK(\\\"http://evil.example\\\")\"}]",
+                    "[{\"id\":1,\"nome\":\"Ana Souza\",\"status\":\"Presente\",\"telefone\":\"5,51E+12\"}]",
+                    "[{\"id\":1,\"nome\":\"Ana Souza\",\"status\":\"Presente\",\"telefone\":\"(11 90000-0010\"}]",
+                    "[{\"id\":1,\"nome\":\"Ana Souza\",\"status\":\"Presente\",\"telefone\":\"(••) •••••-••••\"}]"
+                }) {
+            mockMvc.perform(
+                            post("/api/cuidadores/batch")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(payloadInvalido))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("INVALID_PAYLOAD"));
+        }
+
+        // S16: ApiExceptionHandler distingue 'id' (INVALID_ID) de outros parametros
+        // (INVALID_PAYLOAD)
+        ApiExceptionHandler handler = new ApiExceptionHandler();
+        Method metodoAlvo =
+                CuidadorController.class.getMethod(
+                        "atualizarStatus", Long.class, StatusUpdateRequest.class);
+        MethodParameter param = new MethodParameter(metodoAlvo, 0);
+        MockHttpServletRequest mockReq = new MockHttpServletRequest("GET", "/api/cuidadores");
+
+        MethodArgumentTypeMismatchException mismatchOutroParam =
+                new MethodArgumentTypeMismatchException(
+                        "invalido",
+                        Boolean.class,
+                        "privacy",
+                        param,
+                        new IllegalArgumentException());
+        ResponseEntity<ApiErrorResponse> respOutro =
+                handler.tratarTipoDeParametroInvalido(mismatchOutroParam, mockReq);
+        assertEquals(400, respOutro.getStatusCode().value());
+        assertEquals("INVALID_PAYLOAD", respOutro.getBody().code());
+    }
+
+    @Test
+    @DisplayName(
+            "WebApiConfig.parseAllowedOrigins normaliza barras finais e falha rapido em origens sem esquema HTTP (M4.1)")
+    void deveNormalizarOrigensCorsERejeitarConfiguracaoMalformada() {
+        assertEquals(List.of("*"), WebApiConfig.parseAllowedOrigins(null));
+        assertEquals(List.of("*"), WebApiConfig.parseAllowedOrigins("   "));
+        assertEquals(List.of("*"), WebApiConfig.parseAllowedOrigins("*"));
+        assertEquals(
+                List.of("http://localhost:5173", "https://app.escala.example.com"),
+                WebApiConfig.parseAllowedOrigins(
+                        " http://localhost:5173/ , https://app.escala.example.com/// "));
+
+        for (String origemInvalida :
+                new String[] {
+                    "localhost:5173",
+                    "ftp://app.escala.example.com",
+                    "http://",
+                    "https://",
+                    "http://localhost:5173 /api"
+                }) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> WebApiConfig.parseAllowedOrigins(origemInvalida));
+        }
+    }
+
+    @Test
+    @DisplayName(
             "Bateria adversaria HTTP valida 400/404/405/415, bloqueia coercao escalar Jackson 3 e preserva snapshot")
     void deveRejeitarPayloadsAdversariosECoercoesSilenciosasComSchemaUniforme() throws Exception {
         // 404 para ID valido inexistente
@@ -227,7 +436,7 @@ class EscalaElderlyApiApplicationTests {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_ID"));
 
-        // 400 MALFORMED_JSON para JSON truncado, literal null e coercao escalar indevida (M1)
+        // 400 MALFORMED_JSON para JSON truncado, literal null e coercao escalar indevida
         for (String badPatchBody :
                 new String[] {
                     "{\"status\":",
@@ -287,7 +496,7 @@ class EscalaElderlyApiApplicationTests {
                 .andExpect(jsonPath("$.length()").value(4))
                 .andExpect(jsonPath("$[0].nome").value("Ana Souza"));
 
-        // 405, 415 e 404 de rota nao mapeada com CORS garantido em /api/** (M3)
+        // 405, 415 e 404 de rota nao mapeada com CORS garantido em /api/**
         mockMvc.perform(delete("/api/cuidadores").header("Origin", VITE_ORIGIN))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(header().string("Access-Control-Allow-Origin", "*"))
@@ -344,5 +553,67 @@ class EscalaElderlyApiApplicationTests {
                                 .header("Access-Control-Request-Method", "POST"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", "*"));
+    }
+
+    @Nested
+    @SpringBootTest(
+            properties =
+                    "escala.cors.allowed-origins=http://localhost:5173,https://app.escala.example.com/")
+    @AutoConfigureMockMvc
+    @DisplayName("Perfil de CORS restrito via escala.cors.allowed-origins (S17, S18)")
+    class RestrictedCorsOriginsProfileTest {
+
+        @Autowired private MockMvc restrictedMockMvc;
+
+        @Autowired private CuidadorService restrictedCuidadorService;
+
+        @BeforeEach
+        void restaurarEscalaLimpa() {
+            restrictedCuidadorService.restaurarEscalaInicial();
+        }
+
+        @Test
+        @DisplayName(
+                "Aceita origens autorizadas (normalizando barra final) e bloqueia origem intrusa com 403 sem mutar estado")
+        void deveAceitarOrigensAutorizadasEBloquearOrigemIntrusaCom403SemEfeitoColateral()
+                throws Exception {
+            restrictedMockMvc
+                    .perform(get("/api/cuidadores").header("Origin", VITE_ORIGIN))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Access-Control-Allow-Origin", VITE_ORIGIN))
+                    .andExpect(header().string("Vary", containsString("Origin")));
+
+            restrictedMockMvc
+                    .perform(
+                            get("/api/cuidadores")
+                                    .header("Origin", "https://app.escala.example.com"))
+                    .andExpect(status().isOk())
+                    .andExpect(
+                            header().string(
+                                            "Access-Control-Allow-Origin",
+                                            "https://app.escala.example.com"))
+                    .andExpect(header().string("Vary", containsString("Origin")));
+
+            restrictedMockMvc
+                    .perform(
+                            options("/api/cuidadores/3/status")
+                                    .header("Origin", "https://evil.example.com")
+                                    .header("Access-Control-Request-Method", "PATCH"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+
+            restrictedMockMvc
+                    .perform(
+                            patch("/api/cuidadores/3/status")
+                                    .header("Origin", "https://evil.example.com")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content("{\"status\":\"Faltou\"}"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+
+            // S18: Confirma que Carlos Rocha (id=3) permanece Presente apos tentativa bloqueada
+            assertEquals(
+                    "Presente", restrictedCuidadorService.listarCuidadores().get(2).getStatus());
+        }
     }
 }

@@ -15,16 +15,19 @@ import org.springframework.stereotype.Service;
  * <p>Utiliza um snapshot imutavel (AtomicReference<List<Cuidador>>):
  *
  * <ul>
- *   <li>Leituras (GET) ocorrem em O(1) sem travas (lock-free) e nunca enxergam listas vazias ou
- *       lotes pela metade (Zero Torn Reads).
- *   <li>Escritas (PATCH, POST /batch, POST /reset) validam 100% dos dados antes de trocar a
- *       referencia atomicamente sob writeLock (Crash Early / Tudo-ou-Nada).
+ *   <li>Leituras padrao (GET ?privacy=false) ocorrem em O(1) sem travas (lock-free) e nunca
+ *       enxergam listas vazias ou lotes pela metade (Zero Torn Reads).
+ *   <li>Leituras publicas (GET ?privacy=true) constroem uma projecao imutavel mascarada via
+ *       LgpdPrivacyMasker sem alterar o snapshot canonico em memoria.
+ *   <li>Escritas (PATCH, POST /batch, POST /reset) higienizam entradas contra CSV Formula Injection
+ *       (CsvSanitizer) e validam 100% dos invariantes antes de trocar a referencia atomicamente sob
+ *       writeLock (Crash Early / Tudo-ou-Nada).
  * </ul>
  */
 @Service
 public class CuidadorService {
 
-    /** Limite seguro de inteiros IEEE-754 (Number.MAX_SAFE_INTEGER no JavaScript/TypeScript). */
+    /** Limite seguro de inteiros IEEE-754 (Number.MAX_SAFE_JS_ID no JavaScript/TypeScript). */
     public static final long MAX_SAFE_JS_ID = 9_007_199_254_740_991L;
 
     public static final int MAX_BATCH_SIZE = 500;
@@ -36,9 +39,18 @@ public class CuidadorService {
     private final AtomicReference<List<Cuidador>> snapshotRef =
             new AtomicReference<>(criarEscalaInicialPadrao());
 
-    /** Retorna o snapshot imutavel atual ordenado por ID crescente em O(1). */
+    /** Retorna o snapshot imutavel canonico atual ordenado por ID crescente em O(1). */
     public List<Cuidador> listarCuidadores() {
-        return snapshotRef.get();
+        return listarCuidadores(false);
+    }
+
+    /**
+     * Retorna a escala completa (modoPrivacidade=false) ou a projecao publica minimizada conforme a
+     * LGPD (modoPrivacidade=true) sem mutar o estado em memoria.
+     */
+    public List<Cuidador> listarCuidadores(boolean modoPrivacidade) {
+        List<Cuidador> atual = snapshotRef.get();
+        return modoPrivacidade ? LgpdPrivacyMasker.projetarListaPublica(atual) : atual;
     }
 
     /**
@@ -90,8 +102,9 @@ public class CuidadorService {
     }
 
     /**
-     * Substitui atomicamente a escala ativa por um lote validado (ex: importacao CSV). Se qualquer
-     * item falhar na validacao, nenhum registro da escala anterior e alterado.
+     * Substitui atomicamente a escala ativa por um lote validado e higienizado contra CSV Formula
+     * Injection. Se qualquer item falhar na validacao, nenhum registro da escala anterior e
+     * alterado.
      */
     public List<Cuidador> sincronizarLote(List<CuidadorBatchItem> itens) {
         if (itens == null || itens.isEmpty()) {
@@ -149,14 +162,17 @@ public class CuidadorService {
 
             long idFinal = (item.id() != null) ? item.id() : proximoAutoId++;
             String nome =
-                    normalizarTextoObrigatorio(item.nome(), prefixo + ".nome", MAX_TEXT_LENGTH);
+                    CsvSanitizer.higienizarTextoObrigatorio(
+                            item.nome(), prefixo + ".nome", MAX_TEXT_LENGTH);
             String status = normalizarStatusObrigatorio(item.status(), prefixo + ".status");
             String turno =
-                    normalizarTextoOpcional(item.turno(), prefixo + ".turno", MAX_TEXT_LENGTH);
+                    CsvSanitizer.higienizarTextoOpcional(
+                            item.turno(), prefixo + ".turno", MAX_TEXT_LENGTH);
             String quarto =
-                    normalizarTextoOpcional(item.quarto(), prefixo + ".quarto", MAX_TEXT_LENGTH);
+                    CsvSanitizer.higienizarTextoOpcional(
+                            item.quarto(), prefixo + ".quarto", MAX_TEXT_LENGTH);
             String telefone =
-                    normalizarTextoOpcional(
+                    CsvSanitizer.higienizarTelefoneOpcional(
                             item.telefone(), prefixo + ".telefone", MAX_PHONE_LENGTH);
             validarHorasDescanso(item.horasDescanso(), prefixo + ".horasDescanso");
             String substituto =
@@ -233,7 +249,9 @@ public class CuidadorService {
                             + campo
                             + "' e obrigatorio e deve ser um dentre: Presente, Faltou, Folga, Cobertura.");
         }
-        rejeitarCaractereNulo(valor, campo);
+        // Status e enumerado estrito: jamais aplicar CsvSanitizer para nao transformar "=Presente"
+        // em "Presente" silenciosamente.
+        CsvSanitizer.validarLimitesBrutosSemNulo(valor, campo);
         String limpo = valor.trim();
         if (!StatusCuidador.ehValido(limpo)) {
             throw new InvalidCuidadorPayloadException(
@@ -245,47 +263,13 @@ public class CuidadorService {
         return limpo;
     }
 
-    private static String normalizarTextoObrigatorio(String valor, String campo, int maxLen) {
-        if (valor == null) {
-            throw new InvalidCuidadorPayloadException(
-                    InvalidCuidadorPayloadException.CODE_INVALID_PAYLOAD,
-                    "Campo obrigatorio '" + campo + "' nao pode ser nulo.");
-        }
-        rejeitarCaractereNulo(valor, campo);
-        String limpo = valor.trim();
-        if (limpo.isEmpty() || limpo.length() > maxLen) {
-            throw new InvalidCuidadorPayloadException(
-                    InvalidCuidadorPayloadException.CODE_INVALID_PAYLOAD,
-                    "Campo '"
-                            + campo
-                            + "' deve conter entre 1 e "
-                            + maxLen
-                            + " caracteres validos.");
-        }
-        return limpo;
-    }
-
-    private static String normalizarTextoOpcional(String valor, String campo, int maxLen) {
-        if (valor == null) {
-            return null;
-        }
-        rejeitarCaractereNulo(valor, campo);
-        String limpo = valor.trim();
-        if (limpo.isEmpty()) {
-            return null;
-        }
-        if (limpo.length() > maxLen) {
-            throw new InvalidCuidadorPayloadException(
-                    InvalidCuidadorPayloadException.CODE_INVALID_PAYLOAD,
-                    "Campo opcional '" + campo + "' excede o limite de " + maxLen + " caracteres.");
-        }
-        return limpo;
-    }
-
     private static String normalizarSubstitutoPorStatus(
             String statusCanonica, String substitutoBruto, String campo) {
-        String normalizado = normalizarTextoOpcional(substitutoBruto, campo, MAX_TEXT_LENGTH);
-        return StatusCuidador.COBERTURA.equals(statusCanonica) ? normalizado : null;
+        // Crash Early: valida \0, tamanho maximo e higieniza formula antes de descartar fora de
+        // Cobertura.
+        String higienizado =
+                CsvSanitizer.higienizarTextoOpcional(substitutoBruto, campo, MAX_TEXT_LENGTH);
+        return StatusCuidador.COBERTURA.equals(statusCanonica) ? higienizado : null;
     }
 
     private static void validarHorasDescanso(Integer horas, String campo) {
@@ -293,14 +277,6 @@ public class CuidadorService {
             throw new InvalidCuidadorPayloadException(
                     InvalidCuidadorPayloadException.CODE_INVALID_PAYLOAD,
                     "Campo '" + campo + "' deve estar entre 0 e " + MAX_REST_HOURS + " horas.");
-        }
-    }
-
-    private static void rejeitarCaractereNulo(String valor, String campo) {
-        if (valor.indexOf('\0') >= 0) {
-            throw new InvalidCuidadorPayloadException(
-                    InvalidCuidadorPayloadException.CODE_INVALID_PAYLOAD,
-                    "Campo '" + campo + "' contem caractere de controle nulo proibido.");
         }
     }
 }
