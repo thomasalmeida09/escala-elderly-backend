@@ -62,7 +62,7 @@ class CuidadorServiceTest {
 
     @Test
     @DisplayName(
-            "atualizarStatus altera Carlos (id=3), persiste substituto em Cobertura e limpa ao voltar a Presente")
+            "atualizarStatus altera Carlos (id=3), higieniza substituto em Cobertura e limpa ao voltar a Presente (S04)")
     void deveTransicionarStatusELimparSubstitutoForaDeCobertura() {
         Cuidador faltou =
                 service.atualizarStatus(3L, new StatusUpdateRequest("Faltou", "Fantasma Ignorado"));
@@ -74,7 +74,7 @@ class CuidadorServiceTest {
 
         Cuidador coberto =
                 service.atualizarStatus(
-                        3L, new StatusUpdateRequest("Cobertura", "  Folguista Turno A  "));
+                        3L, new StatusUpdateRequest("Cobertura", " =+Folguista Turno A  "));
         assertEquals("Cobertura", coberto.getStatus());
         assertEquals("Folguista Turno A", coberto.getSubstituto());
         assertEquals("Folguista Turno A", service.listarCuidadores().get(2).getSubstituto());
@@ -87,14 +87,14 @@ class CuidadorServiceTest {
         assertNull(service.listarCuidadores().get(2).getSubstituto());
 
         Cuidador coberturaSemNome =
-                service.atualizarStatus(3L, new StatusUpdateRequest("Cobertura", "   "));
+                service.atualizarStatus(3L, new StatusUpdateRequest("Cobertura", "===++--"));
         assertEquals("Cobertura", coberturaSemNome.getStatus());
         assertNull(coberturaSemNome.getSubstituto());
     }
 
     @Test
     @DisplayName(
-            "atualizarStatus valida 400 antes de 404 e rejeita IDs, status e caracteres invalidos")
+            "atualizarStatus valida 400 antes de 404, nao sanitiza status (=Presente -> 400 INVALID_STATUS) e mantem Crash Early em substituto (S08, S09)")
     void deveValidarPreCondicoes400AntesDe404EmAtualizarStatus() {
         CuidadorNotFoundException notFound =
                 assertThrows(
@@ -112,6 +112,18 @@ class CuidadorServiceTest {
                                 service.atualizarStatus(
                                         999L, new StatusUpdateRequest("Trabalhando", null)));
         assertEquals("INVALID_STATUS", badStatusBefore404.getCode());
+
+        // S08: status com prefixo de formula jamais pode ser sanitizado para status valido
+        for (String statusComFormula :
+                new String[] {"=Presente", "+Faltou", "-Folga", "@Cobertura"}) {
+            InvalidCuidadorPayloadException formulaStatusEx =
+                    assertThrows(
+                            InvalidCuidadorPayloadException.class,
+                            () ->
+                                    service.atualizarStatus(
+                                            1L, new StatusUpdateRequest(statusComFormula, null)));
+            assertEquals("INVALID_STATUS", formulaStatusEx.getCode());
+        }
 
         InvalidCuidadorPayloadException caseMismatch =
                 assertThrows(
@@ -137,6 +149,7 @@ class CuidadorServiceTest {
             assertEquals("INVALID_ID", ex.getCode());
         }
 
+        // S09: Crash Early valida \0 e >120 chars em substituto mesmo quando status != Cobertura
         InvalidCuidadorPayloadException nullByteEx =
                 assertThrows(
                         InvalidCuidadorPayloadException.class,
@@ -144,23 +157,82 @@ class CuidadorServiceTest {
                                 service.atualizarStatus(
                                         1L,
                                         new StatusUpdateRequest(
-                                                "Cobertura", "Folguista\u0000Injetado")));
+                                                "Folga", "Folguista\u0000Injetado")));
         assertEquals("INVALID_PAYLOAD", nullByteEx.getCode());
+
+        String substitutoAcimaDoLimite = "x".repeat(CuidadorService.MAX_TEXT_LENGTH + 1);
+        InvalidCuidadorPayloadException maxLenEx =
+                assertThrows(
+                        InvalidCuidadorPayloadException.class,
+                        () ->
+                                service.atualizarStatus(
+                                        1L,
+                                        new StatusUpdateRequest(
+                                                "Presente", substitutoAcimaDoLimite)));
+        assertEquals("INVALID_PAYLOAD", maxLenEx.getCode());
     }
 
     @Test
     @DisplayName(
-            "sincronizarLote gera Auto-ID monotonico (maxExplicitId + 1), aplica trimToNull e limpa substituto indevido")
+            "listarCuidadores(true) projeta mascara LGPD preservando horasDescanso e mantendo snapshotRef 100% intacto (S12, S13, S14)")
+    void deveProjetarModoPrivacidadeLgpdSemMutarSnapshotEmMemoria() {
+        service.sincronizarLote(
+                List.of(
+                        new CuidadorBatchItem(
+                                3L,
+                                "Carlos Rocha",
+                                "Cobertura",
+                                "Noturno (19h-07h)",
+                                "Quarto 03",
+                                "(11) 90000-0010",
+                                8,
+                                "João da Conceição"),
+                        new CuidadorBatchItem(
+                                4L,
+                                "Mariana Costa",
+                                "Folga",
+                                "Diurno (07h-19h)",
+                                "Quarto 04",
+                                null,
+                                24,
+                                null)));
+
+        List<Cuidador> referenciaAntes = service.listarCuidadores(false);
+        List<Cuidador> publica = service.listarCuidadores(true);
+        List<Cuidador> referenciaDepois = service.listarCuidadores(false);
+
+        assertSame(referenciaAntes, referenciaDepois);
+        assertEquals(2, publica.size());
+        assertThrows(UnsupportedOperationException.class, publica::clear);
+
+        assertEquals("Carlos R.", publica.get(0).getNome());
+        assertEquals("João C.", publica.get(0).getSubstituto());
+        assertEquals("(••) •••••-••••", publica.get(0).getTelefone());
+        assertEquals(8, publica.get(0).getHorasDescanso());
+
+        assertEquals("Mariana C.", publica.get(1).getNome());
+        assertNull(publica.get(1).getTelefone());
+        assertEquals(24, publica.get(1).getHorasDescanso());
+
+        // Snapshot original jamais foi mutado
+        assertEquals("Carlos Rocha", referenciaDepois.get(0).getNome());
+        assertEquals("João da Conceição", referenciaDepois.get(0).getSubstituto());
+        assertEquals("(11) 90000-0010", referenciaDepois.get(0).getTelefone());
+    }
+
+    @Test
+    @DisplayName(
+            "sincronizarLote gera Auto-ID monotonico (maxExplicitId + 1), higieniza CSV Injection e limpa substituto indevido")
     void deveSincronizarLoteComAutoIdMonotonicoESimetriaDeInvariantes() {
         List<CuidadorBatchItem> csvSemId =
                 List.of(
                         new CuidadorBatchItem(
                                 null,
-                                "  Cuidador Sintetico 01  ",
+                                "  =+Cuidador Sintetico 01  ",
                                 "Presente",
                                 "Diurno (07h-19h)",
-                                "   ",
-                                "+55 11 90000-0001",
+                                "---",
+                                "(11) 90000-0001 ramal 12",
                                 24,
                                 "Substituto Indevido"),
                         new CuidadorBatchItem(
@@ -169,19 +241,21 @@ class CuidadorServiceTest {
                                 "Cobertura",
                                 "Noturno (19h-07h)",
                                 "Quarto 02",
-                                "+55 11 90000-0002",
+                                "'+55 11 90000-0002",
                                 36,
-                                "  Folguista Reserva  "));
+                                "  @Folguista Reserva  "));
 
         List<Cuidador> salvoCsv = service.sincronizarLote(csvSemId);
         assertEquals(2, salvoCsv.size());
         assertEquals(1L, salvoCsv.get(0).getId());
         assertEquals("Cuidador Sintetico 01", salvoCsv.get(0).getNome());
         assertNull(salvoCsv.get(0).getQuarto());
+        assertEquals("(11) 90000-0001 ramal 12", salvoCsv.get(0).getTelefone());
         assertNull(salvoCsv.get(0).getSubstituto());
         assertEquals(24, salvoCsv.get(0).getHorasDescanso());
 
         assertEquals(2L, salvoCsv.get(1).getId());
+        assertEquals("+55 11 90000-0002", salvoCsv.get(1).getTelefone());
         assertEquals("Folguista Reserva", salvoCsv.get(1).getSubstituto());
 
         // Lote misto com IDs explicitos [2, 4] + novo item sem ID -> deve receber 5 (nao 1!)
@@ -233,11 +307,13 @@ class CuidadorServiceTest {
                         new CuidadorBatchItem(
                                 2L, "Lucas Lima", "Folga", null, null, null, 24, null),
                         new CuidadorBatchItem(
-                                3L, "Carlos Rocha", "AusenteInvalido", null, null, null, 12, null));
+                                3L, "Carlos Rocha", "=Presente", null, null, null, 12, null));
 
-        assertThrows(
-                InvalidCuidadorPayloadException.class,
-                () -> service.sincronizarLote(loteComItem3Invalido));
+        InvalidCuidadorPayloadException badStatusEx =
+                assertThrows(
+                        InvalidCuidadorPayloadException.class,
+                        () -> service.sincronizarLote(loteComItem3Invalido));
+        assertEquals("INVALID_STATUS", badStatusEx.getCode());
         assertSame(snapshotAntes, service.listarCuidadores());
 
         List<CuidadorBatchItem> loteComElementoNulo = new ArrayList<>();
@@ -302,8 +378,9 @@ class CuidadorServiceTest {
 
     @Test
     @DisplayName(
-            "Concorrencia MVCC com 24 threads em CyclicBarrier garante zero torn reads e invariantes intactos")
-    void deveSuportar24ThreadsSimultaneasSemTornReadsOuCorrupcaoDeEstado() throws Exception {
+            "Concorrencia MVCC com 24 threads em CyclicBarrier (leituras mistas privacy=false/true + escritas) garante zero torn reads e zero contaminacao LGPD (M6)")
+    void deveSuportar24ThreadsSimultaneasComLeiturasMistasPrivacySemContaminarSnapshot()
+            throws Exception {
         final int totalThreads = 24;
         final int iteracoesPorThread = 150;
         final CyclicBarrier barreira = new CyclicBarrier(totalThreads);
@@ -366,26 +443,42 @@ class CuidadorServiceTest {
                         () -> {
                             barreira.await(5, TimeUnit.SECONDS);
                             for (int i = 0; i < iteracoesPorThread; i++) {
-                                if (threadIdx % 2 == 0) {
-                                    List<Cuidador> lido = service.listarCuidadores();
+                                int papel = threadIdx % 3;
+                                if (papel == 0) {
+                                    // Leitor canonico (privacy=false): nomes e telefones devem
+                                    // permanecer completos
+                                    List<Cuidador> lido = service.listarCuidadores(false);
                                     assertNotNull(lido);
-                                    assertTrue(
-                                            Set.of(4, 5).contains(lido.size()),
-                                            "Tamanho inesperado em leitura concorrente: "
-                                                    + lido.size());
+                                    assertTrue(Set.of(4, 5).contains(lido.size()));
                                     assertThrows(UnsupportedOperationException.class, lido::clear);
-
-                                    long idAnterior = 0L;
-                                    for (Cuidador c : lido) {
-                                        assertNotNull(c);
+                                    assertEquals("Ana Souza", lido.get(0).getNome());
+                                    assertEquals("Carlos Rocha", lido.get(2).getNome());
+                                    if (lido.size() == 5) {
+                                        assertEquals(
+                                                "+55 11 90000-0005", lido.get(4).getTelefone());
+                                        assertEquals(36, lido.get(4).getHorasDescanso());
+                                    }
+                                } else if (papel == 1) {
+                                    // Leitor publico LGPD (privacy=true): sobrenomes abreviados e
+                                    // zero digitos no telefone
+                                    List<Cuidador> publico = service.listarCuidadores(true);
+                                    assertNotNull(publico);
+                                    assertTrue(Set.of(4, 5).contains(publico.size()));
+                                    assertThrows(
+                                            UnsupportedOperationException.class, publico::clear);
+                                    assertEquals("Ana S.", publico.get(0).getNome());
+                                    assertEquals("Carlos R.", publico.get(2).getNome());
+                                    if (StatusCuidador.COBERTURA.equals(publico.get(2).getStatus())
+                                            && publico.get(2).getSubstituto() != null) {
+                                        assertEquals(
+                                                "Folguista T.", publico.get(2).getSubstituto());
+                                    }
+                                    if (publico.size() == 5) {
+                                        String tel = publico.get(4).getTelefone();
+                                        assertEquals("(••) •••••-••••", tel);
                                         assertTrue(
-                                                c.getId() > idAnterior,
-                                                "IDs fora de ordem estrita");
-                                        idAnterior = c.getId();
-                                        assertTrue(StatusCuidador.ehValido(c.getStatus()));
-                                        if (!StatusCuidador.COBERTURA.equals(c.getStatus())) {
-                                            assertNull(c.getSubstituto());
-                                        }
+                                                tel.chars().noneMatch(c -> c >= '0' && c <= '9'));
+                                        assertEquals(36, publico.get(4).getHorasDescanso());
                                     }
                                 } else {
                                     int acao = (threadIdx + i) % 4;
@@ -396,7 +489,7 @@ class CuidadorServiceTest {
                                         service.atualizarStatus(
                                                 3L,
                                                 new StatusUpdateRequest(
-                                                        "Cobertura", "Folguista Turno A"));
+                                                        "Cobertura", "=Folguista Turno A"));
                                     } else if (acao == 2) {
                                         service.sincronizarLote(loteCincoCuidadores);
                                     } else {
