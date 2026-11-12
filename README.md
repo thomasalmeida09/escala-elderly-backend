@@ -50,6 +50,7 @@ escala-elderly-backend/
 │   │   │   │   ├── WebApiConfig.java                         # CorsFilter em /api/** e customizador estrito Jackson 3
 │   │   │   │   ├── CuidadorController.java                   # Rotas REST (GET, PATCH /status, POST /batch, POST /reset)
 │   │   │   │   ├── CuidadorService.java                      # Motor MVCC lock-free (AtomicReference<List<Cuidador>>)
+│   │   │   │   ├── CuidadorSseBroadcaster.java               # Hub concorrente SSE (SseEmitter, isolamento LGPD e heartbeat)
 │   │   │   │   ├── Cuidador.java                             # Entidade imutável canônica (@JsonInclude NON_NULL)
 │   │   │   │   ├── StatusCuidador.java                       # Política dos 4 status válidos (Presente, Faltou, Folga, Cobertura)
 │   │   │   │   ├── CsvSanitizer.java                         # Higienização em ponto fixo anti-CSV Injection e telefone E.164
@@ -66,6 +67,7 @@ escala-elderly-backend/
 │   │       └── java/escala_elderly_api/
 │   │           ├── EscalaElderlyApiApplicationTests.java     # Testes integrados MockMvc (Contrato, PATCH/POST, Erros & CORS)
 │   │           ├── CuidadorServiceTest.java                  # Testes unitários de estado, lotes e barreira CyclicBarrier (24 threads)
+│   │           ├── CuidadorSseBroadcasterTest.java           # Testes unitários determinísticos do hub SSE e ciclo de vida
 │   │           ├── SecurityAndLgpdPolicyTest.java            # Testes unitários de CsvSanitizer (OWASP/E.164) e LgpdPrivacyMasker
 │   │           └── GovernanceHygieneTest.java                # Fitness Functions (paridade README 1:1, ADRs, CI & Clean-Room LGPD)
 │   ├── build.gradle                                          # Spring WebMVC, Java 17 Toolchain & Spotless (AOSP)
