@@ -3,7 +3,11 @@ package escala_elderly_api;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
@@ -14,21 +18,42 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.lang.reflect.Method;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -580,6 +605,94 @@ class EscalaElderlyApiApplicationTests {
                                 .header("Access-Control-Request-Method", "POST"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", "*"));
+
+        mockMvc.perform(
+                        options("/api/cuidadores/stream")
+                                .header("Origin", VITE_ORIGIN)
+                                .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "*"));
+    }
+
+    @Test
+    @DisplayName(
+            "GET /api/cuidadores/stream com ?privacy invalido ou HPP responde 400 JSON mesmo sob Accept: text/event-stream, e ApiExceptionHandler blinda respostas async comitadas (S09, S17)")
+    void deveRejeitarPrivacyInvalidoNoStreamComAcceptSseEBlindarRespostasAsyncComitadas()
+            throws Exception {
+        for (String valorInvalido :
+                new String[] {"", "   ", "1", "0", "sim", "banana", "true,false"}) {
+            mockMvc.perform(
+                            get("/api/cuidadores/stream")
+                                    .param("privacy", valorInvalido)
+                                    .header("Origin", VITE_ORIGIN)
+                                    .header("Accept", MediaType.TEXT_EVENT_STREAM_VALUE))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                    .andExpect(header().string("Access-Control-Allow-Origin", "*"))
+                    .andExpect(jsonPath("$.code").value("INVALID_PAYLOAD"));
+        }
+
+        mockMvc.perform(
+                        get("/api/cuidadores/stream?privacy=false&privacy=true")
+                                .header("Accept", MediaType.TEXT_EVENT_STREAM_VALUE))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("INVALID_PAYLOAD"));
+
+        mockMvc.perform(
+                        get("/api/cuidadores/stream?privacy=true&privacy=true")
+                                .header("Accept", MediaType.TEXT_EVENT_STREAM_VALUE))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("INVALID_PAYLOAD"));
+
+        assertEquals(0, cuidadorService.contarAssinantesStreamAtivos());
+
+        // Accept incompativel em rota JSON normal retorna 406 NOT_ACCEPTABLE estruturado
+        mockMvc.perform(get("/api/cuidadores").header("Accept", MediaType.APPLICATION_XML_VALUE))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("NOT_ACCEPTABLE"));
+
+        // S17: Blindagem de ApiExceptionHandler para respostas async/SSE ja comitadas
+        ApiExceptionHandler handler = new ApiExceptionHandler();
+        MockHttpServletRequest reqStream =
+                new MockHttpServletRequest("GET", "/api/cuidadores/stream");
+
+        assertNull(
+                handler.tratarConexaoAssincronaEncerradaPeloCliente(
+                        new AsyncRequestNotUsableException("Client closed stream")));
+
+        MockHttpServletResponse respNaoComitada = new MockHttpServletResponse();
+        ResponseEntity<Void> timeoutNaoComitado =
+                handler.tratarTimeoutAssincrono(
+                        new AsyncRequestTimeoutException(), respNaoComitada);
+        assertEquals(503, timeoutNaoComitado.getStatusCode().value());
+
+        MockHttpServletResponse respComitada = new MockHttpServletResponse();
+        respComitada.setCommitted(true);
+        assertNull(
+                handler.tratarTimeoutAssincrono(new AsyncRequestTimeoutException(), respComitada));
+        assertNull(
+                handler.tratarErroInternoInesperado(
+                        new IOException("Broken pipe"), reqStream, respComitada));
+
+        MockHttpServletResponse respSse = new MockHttpServletResponse();
+        respSse.setContentType("text/event-stream;charset=UTF-8");
+        assertNull(
+                handler.tratarErroInternoInesperado(
+                        new IOException("Stream reset"), reqStream, respSse));
+
+        ResponseEntity<ApiErrorResponse> erroNormal =
+                handler.tratarErroInternoInesperado(new IllegalStateException("Falha"), reqStream);
+        assertEquals(500, erroNormal.getStatusCode().value());
+
+        ResponseEntity<ApiErrorResponse> naoAceitavel =
+                handler.tratarMediaTypeNaoAceitavel(
+                        new HttpMediaTypeNotAcceptableException(
+                                List.of(MediaType.APPLICATION_JSON)),
+                        reqStream);
+        assertEquals(406, naoAceitavel.getStatusCode().value());
     }
 
     @Nested
@@ -638,9 +751,372 @@ class EscalaElderlyApiApplicationTests {
                     .andExpect(status().isForbidden())
                     .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
 
+            restrictedMockMvc
+                    .perform(
+                            get("/api/cuidadores/stream")
+                                    .header("Origin", "https://evil.example.com")
+                                    .header("Accept", MediaType.TEXT_EVENT_STREAM_VALUE))
+                    .andExpect(status().isForbidden())
+                    .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+
+            assertEquals(0, restrictedCuidadorService.contarAssinantesStreamAtivos());
+
             // S18: Confirma que Carlos Rocha (id=3) permanece Presente apos tentativa bloqueada
             assertEquals(
                     "Presente", restrictedCuidadorService.listarCuidadores().get(2).getStatus());
+        }
+    }
+
+    @Nested
+    @SpringBootTest(
+            webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+            properties = {"escala.sse.heartbeat-ms=120", "escala.sse.max-subscribers=3"})
+    @DisplayName(
+            "Stream SSE real sobre TCP/HTTP (RANDOM_PORT): headers, broadcasts, LGPD, heartbeat e FIFO")
+    class SseRealtimeStreamIntegrationTest {
+
+        @LocalServerPort private int port;
+
+        @Autowired private CuidadorService liveCuidadorService;
+
+        @Autowired private JsonMapper liveJsonMapper;
+
+        record SseFrame(String id, String event, String retry, String data) {}
+
+        static final class LiveSseReader implements AutoCloseable {
+            private final HttpResponse<InputStream> response;
+            private final InputStream bodyStream;
+            private final LinkedBlockingQueue<SseFrame> events = new LinkedBlockingQueue<>();
+            private final LinkedBlockingQueue<String> comments = new LinkedBlockingQueue<>();
+            private final CountDownLatch closedByServer = new CountDownLatch(1);
+            private final AtomicInteger readErrors = new AtomicInteger(0);
+            private final Thread readerThread;
+
+            LiveSseReader(HttpResponse<InputStream> response) {
+                this.response = response;
+                this.bodyStream = response.body();
+                this.readerThread =
+                        new Thread(
+                                this::consumeLoop,
+                                "test-sse-reader-" + System.identityHashCode(this));
+                this.readerThread.setDaemon(true);
+                this.readerThread.start();
+            }
+
+            private void consumeLoop() {
+                try (BufferedReader reader =
+                        new BufferedReader(
+                                new InputStreamReader(bodyStream, StandardCharsets.UTF_8))) {
+                    String id = null;
+                    String event = null;
+                    String retry = null;
+                    String data = null;
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (line.startsWith(":")) {
+                            comments.offer(line);
+                        } else if (line.startsWith("id:")) {
+                            id = line.substring("id:".length()).trim();
+                        } else if (line.startsWith("event:")) {
+                            event = line.substring("event:".length()).trim();
+                        } else if (line.startsWith("retry:")) {
+                            retry = line.substring("retry:".length()).trim();
+                        } else if (line.startsWith("data:")) {
+                            data = line.substring("data:".length());
+                        } else if (line.isEmpty() && data != null) {
+                            events.offer(new SseFrame(id, event, retry, data));
+                            id = null;
+                            event = null;
+                            retry = null;
+                            data = null;
+                        }
+                    }
+                    closedByServer.countDown();
+                } catch (IOException ex) {
+                    readErrors.incrementAndGet();
+                    closedByServer.countDown();
+                }
+            }
+
+            HttpResponse<InputStream> response() {
+                return response;
+            }
+
+            SseFrame pollEvent(long timeout, TimeUnit unit) throws InterruptedException {
+                return events.poll(timeout, unit);
+            }
+
+            String pollComment(long timeout, TimeUnit unit) throws InterruptedException {
+                return comments.poll(timeout, unit);
+            }
+
+            boolean awaitServerClose(long timeout, TimeUnit unit) throws InterruptedException {
+                return closedByServer.await(timeout, unit);
+            }
+
+            @Override
+            public void close() {
+                try {
+                    bodyStream.close();
+                } catch (IOException ex) {
+                    readErrors.incrementAndGet();
+                }
+            }
+        }
+
+        @BeforeEach
+        void restaurarEscalaLimpa() {
+            liveCuidadorService.restaurarEscalaInicial();
+        }
+
+        private LiveSseReader abrirStream(
+                HttpClient client, String querySuffix, String lastEventIdHeader) throws Exception {
+            HttpRequest.Builder reqBuilder =
+                    HttpRequest.newBuilder(
+                                    URI.create(
+                                            "http://localhost:"
+                                                    + port
+                                                    + "/api/cuidadores/stream"
+                                                    + querySuffix))
+                            .GET()
+                            .header("Origin", VITE_ORIGIN)
+                            .header("Accept", MediaType.TEXT_EVENT_STREAM_VALUE);
+            if (lastEventIdHeader != null) {
+                reqBuilder.header("Last-Event-ID", lastEventIdHeader);
+            }
+            HttpResponse<InputStream> resp =
+                    client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofInputStream());
+            return new LiveSseReader(resp);
+        }
+
+        @Test
+        @DisplayName(
+                "Transmite SCHEDULE_UPDATED em tempo real (PATCH, batch, reset) isolando ?privacy=true, ignorando falhas 400/404, emitindo :heartbeat e aplicando FIFO (S01..S16)")
+        void deveTransmitirEventosEmTempoRealComIsolamentoLgpdHeartbeatEFifo() throws Exception {
+            HttpClient httpClient =
+                    HttpClient.newBuilder()
+                            .version(HttpClient.Version.HTTP_1_1)
+                            .connectTimeout(Duration.ofSeconds(5))
+                            .build();
+
+            // S10: Last-Event-ID nao-numerico hostil jamais causa erro 500/NumberFormatException
+            try (LiveSseReader leitorHostil = abrirStream(httpClient, "", "nao-numerico-xyz")) {
+                assertEquals(200, leitorHostil.response().statusCode());
+                SseFrame inicialHostil = leitorHostil.pollEvent(5, TimeUnit.SECONDS);
+                assertNotNull(inicialHostil);
+                assertEquals("SCHEDULE_UPDATED", inicialHostil.event());
+            }
+
+            try (LiveSseReader clienteGestor = abrirStream(httpClient, "", "999999");
+                    LiveSseReader clienteMuralLgpd =
+                            abrirStream(httpClient, "?privacy=true", null)) {
+
+                // S02, M2.1, M6.1: Headers obrigatorios de stream UTF-8 + anti-buffering + CORS
+                for (LiveSseReader cliente : List.of(clienteGestor, clienteMuralLgpd)) {
+                    assertEquals(200, cliente.response().statusCode());
+                    String contentType =
+                            cliente.response().headers().firstValue("Content-Type").orElse("");
+                    assertTrue(contentType.contains("text/event-stream"));
+                    assertTrue(contentType.toLowerCase().contains("charset=utf-8"));
+                    assertEquals(
+                            "no-cache, no-transform",
+                            cliente.response().headers().firstValue("Cache-Control").orElse(""));
+                    assertEquals(
+                            "no",
+                            cliente.response()
+                                    .headers()
+                                    .firstValue("X-Accel-Buffering")
+                                    .orElse(""));
+                    assertEquals(
+                            "*",
+                            cliente.response()
+                                    .headers()
+                                    .firstValue("Access-Control-Allow-Origin")
+                                    .orElse(""));
+                }
+
+                // S01, S03, S04, S10: Evento inicial imediato mesmo com Last-Event-ID: 999999
+                SseFrame initGestor = clienteGestor.pollEvent(5, TimeUnit.SECONDS);
+                SseFrame initMural = clienteMuralLgpd.pollEvent(5, TimeUnit.SECONDS);
+                assertNotNull(initGestor);
+                assertNotNull(initMural);
+                assertEquals("SCHEDULE_UPDATED", initGestor.event());
+                assertEquals("3000", initGestor.retry());
+                assertTrue(initGestor.data().startsWith("[{"));
+                assertFalse(initGestor.data().contains("null"));
+
+                long seqInicial = Long.parseLong(initGestor.id());
+                assertTrue(seqInicial >= 1L);
+
+                List<Cuidador> listaInitGestor =
+                        liveJsonMapper.readValue(
+                                initGestor.data(), new TypeReference<List<Cuidador>>() {});
+                List<Cuidador> listaInitMural =
+                        liveJsonMapper.readValue(
+                                initMural.data(), new TypeReference<List<Cuidador>>() {});
+                assertEquals("Carlos Rocha", listaInitGestor.get(2).getNome());
+                assertEquals("Carlos R.", listaInitMural.get(2).getNome());
+
+                // S16: Heartbeat periodico (:heartbeat) mantem proxy vivo sem disparar evento
+                String comentario = clienteGestor.pollComment(3, TimeUnit.SECONDS);
+                assertNotNull(comentario);
+                assertEquals(":heartbeat", comentario);
+
+                // S06: Chamadas invalidas (404 e 400) jamais emitem SCHEDULE_UPDATED
+                HttpResponse<String> resp404 =
+                        httpClient.send(
+                                HttpRequest.newBuilder(
+                                                URI.create(
+                                                        "http://localhost:"
+                                                                + port
+                                                                + "/api/cuidadores/999/status"))
+                                        .method(
+                                                "PATCH",
+                                                HttpRequest.BodyPublishers.ofString(
+                                                        "{\"status\":\"Faltou\"}"))
+                                        .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                                        .build(),
+                                HttpResponse.BodyHandlers.ofString());
+                assertEquals(404, resp404.statusCode());
+
+                HttpResponse<String> resp400 =
+                        httpClient.send(
+                                HttpRequest.newBuilder(
+                                                URI.create(
+                                                        "http://localhost:"
+                                                                + port
+                                                                + "/api/cuidadores/batch"))
+                                        .POST(HttpRequest.BodyPublishers.ofString("[]"))
+                                        .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                                        .build(),
+                                HttpResponse.BodyHandlers.ofString());
+                assertEquals(400, resp400.statusCode());
+
+                // S05, S07, S08: Mutacao 1 -> POST /api/cuidadores/batch com acento e telefone
+                String loteJson =
+                        """
+                        [
+                          {
+                            "id": 3,
+                            "nome": "Carlos Rocha",
+                            "status": "Cobertura",
+                            "turno": "Noturno (19h-07h)",
+                            "quarto": "Quarto 03",
+                            "telefone": "+55 11 90000-0010",
+                            "horasDescanso": 8,
+                            "substituto": "João da Conceição"
+                          }
+                        ]
+                        """;
+                HttpResponse<String> respBatch =
+                        httpClient.send(
+                                HttpRequest.newBuilder(
+                                                URI.create(
+                                                        "http://localhost:"
+                                                                + port
+                                                                + "/api/cuidadores/batch"))
+                                        .POST(HttpRequest.BodyPublishers.ofString(loteJson))
+                                        .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                                        .build(),
+                                HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, respBatch.statusCode());
+
+                SseFrame evBatchGestor = clienteGestor.pollEvent(5, TimeUnit.SECONDS);
+                SseFrame evBatchMural = clienteMuralLgpd.pollEvent(5, TimeUnit.SECONDS);
+                assertNotNull(evBatchGestor);
+                assertNotNull(evBatchMural);
+                // Prova matematica de S06: id saltou exatamente +1 (nenhum evento espurio nas
+                // falhas 404/400!)
+                assertEquals(seqInicial + 1L, Long.parseLong(evBatchGestor.id()));
+                assertEquals(seqInicial + 1L, Long.parseLong(evBatchMural.id()));
+
+                List<Cuidador> dadosBatchGestor =
+                        liveJsonMapper.readValue(
+                                evBatchGestor.data(), new TypeReference<List<Cuidador>>() {});
+                List<Cuidador> dadosBatchMural =
+                        liveJsonMapper.readValue(
+                                evBatchMural.data(), new TypeReference<List<Cuidador>>() {});
+
+                assertEquals("Carlos Rocha", dadosBatchGestor.get(0).getNome());
+                assertEquals("João da Conceição", dadosBatchGestor.get(0).getSubstituto());
+                assertEquals("+55 11 90000-0010", dadosBatchGestor.get(0).getTelefone());
+
+                assertEquals("Carlos R.", dadosBatchMural.get(0).getNome());
+                assertEquals("João C.", dadosBatchMural.get(0).getSubstituto());
+                assertEquals("(••) •••••-••••", dadosBatchMural.get(0).getTelefone());
+                assertTrue(
+                        dadosBatchMural
+                                .get(0)
+                                .getTelefone()
+                                .chars()
+                                .noneMatch(ch -> ch >= '0' && ch <= '9'));
+                assertEquals(8, dadosBatchMural.get(0).getHorasDescanso());
+
+                // Mutacao 2 -> PATCH /api/cuidadores/3/status
+                HttpResponse<String> respPatch =
+                        httpClient.send(
+                                HttpRequest.newBuilder(
+                                                URI.create(
+                                                        "http://localhost:"
+                                                                + port
+                                                                + "/api/cuidadores/3/status"))
+                                        .method(
+                                                "PATCH",
+                                                HttpRequest.BodyPublishers.ofString(
+                                                        "{\"status\":\"Faltou\"}"))
+                                        .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                                        .build(),
+                                HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, respPatch.statusCode());
+
+                SseFrame evPatchGestor = clienteGestor.pollEvent(5, TimeUnit.SECONDS);
+                SseFrame evPatchMural = clienteMuralLgpd.pollEvent(5, TimeUnit.SECONDS);
+                assertNotNull(evPatchGestor);
+                assertNotNull(evPatchMural);
+                assertEquals(seqInicial + 2L, Long.parseLong(evPatchGestor.id()));
+
+                List<Cuidador> dadosPatchGestor =
+                        liveJsonMapper.readValue(
+                                evPatchGestor.data(), new TypeReference<List<Cuidador>>() {});
+                assertEquals("Faltou", dadosPatchGestor.get(0).getStatus());
+                assertNull(dadosPatchGestor.get(0).getSubstituto());
+
+                // Mutacao 3 -> POST /api/cuidadores/reset
+                HttpResponse<String> respReset =
+                        httpClient.send(
+                                HttpRequest.newBuilder(
+                                                URI.create(
+                                                        "http://localhost:"
+                                                                + port
+                                                                + "/api/cuidadores/reset"))
+                                        .POST(HttpRequest.BodyPublishers.noBody())
+                                        .build(),
+                                HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, respReset.statusCode());
+
+                SseFrame evResetGestor = clienteGestor.pollEvent(5, TimeUnit.SECONDS);
+                SseFrame evResetMural = clienteMuralLgpd.pollEvent(5, TimeUnit.SECONDS);
+                assertNotNull(evResetGestor);
+                assertNotNull(evResetMural);
+                assertEquals(seqInicial + 3L, Long.parseLong(evResetGestor.id()));
+
+                List<Cuidador> dadosResetMural =
+                        liveJsonMapper.readValue(
+                                evResetMural.data(), new TypeReference<List<Cuidador>>() {});
+                assertEquals(4, dadosResetMural.size());
+                assertEquals("Carlos R.", dadosResetMural.get(2).getNome());
+
+                // S13: Eviccao FIFO ao exceder escala.sse.max-subscribers=3
+                try (LiveSseReader cliente3 = abrirStream(httpClient, "", null);
+                        LiveSseReader cliente4 = abrirStream(httpClient, "?privacy=true", null)) {
+                    assertNotNull(cliente3.pollEvent(5, TimeUnit.SECONDS));
+                    assertNotNull(cliente4.pollEvent(5, TimeUnit.SECONDS));
+                    assertTrue(
+                            clienteGestor.awaitServerClose(5, TimeUnit.SECONDS),
+                            "Cliente mais antigo (FIFO) deveria ter sido encerrado ao abrir 4a conexao");
+                    assertTrue(liveCuidadorService.contarAssinantesStreamAtivos() <= 3);
+                }
+            }
         }
     }
 }
