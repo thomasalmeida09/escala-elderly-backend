@@ -222,9 +222,10 @@ class CuidadorSseBroadcasterTest {
         assertFalse(jsonData.startsWith("\"["));
         assertFalse(jsonData.contains("null"));
         assertFalse(jsonData.contains("\"substituto\""));
-        assertEquals(
-                new MediaType("text", "plain", StandardCharsets.UTF_8),
-                criados.get(0).getDataMediaTypes().get(0));
+        assertTrue(criados.get(0).getDataMediaTypes().size() >= 2);
+        for (MediaType mediaType : criados.get(0).getDataMediaTypes()) {
+            assertEquals(new MediaType("text", "plain", StandardCharsets.UTF_8), mediaType);
+        }
 
         List<Cuidador> desserializados =
                 JSON_MAPPER.readValue(jsonData, new TypeReference<List<Cuidador>>() {});
@@ -577,5 +578,84 @@ class CuidadorSseBroadcasterTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new CuidadorSseBroadcaster(JSON_MAPPER, 1000L, 10, -1L, 0L));
+    }
+
+    @Test
+    @DisplayName(
+            "Fecha janela split-brain C1 (novo assinante em v2 antes de publicarAtualizacao) e janela TOCTOU C2 em destroy()")
+    void deveFecharJanelaSplitBrainC1EJanelaToctouShutdownC2() {
+        List<TestSseEmitter> criadosC1 = new ArrayList<>();
+        CuidadorSseBroadcaster hubC1 =
+                new CuidadorSseBroadcaster(
+                        JSON_MAPPER,
+                        30_000L,
+                        10,
+                        3_000L,
+                        0L,
+                        Runnable::run,
+                        timeout -> {
+                            TestSseEmitter e = new TestSseEmitter(timeout);
+                            criadosC1.add(e);
+                            return e;
+                        },
+                        LgpdPrivacyMasker::projetarListaPublica);
+
+        CuidadorSseBroadcaster.SnapshotEscala v1 =
+                new CuidadorSseBroadcaster.SnapshotEscala(
+                        1L, sementeComPiiSintetica(StatusCuidador.PRESENTE, null));
+        CuidadorSseBroadcaster.SnapshotEscala v2 =
+                new CuidadorSseBroadcaster.SnapshotEscala(
+                        2L, sementeComPiiSintetica(StatusCuidador.COBERTURA, "Folguista Turno A"));
+
+        // S1 conecta em v1; antes da thread escritora chamar publicarAtualizacao(v2), S2 le v2 do
+        // AtomicReference do servico e registra-se com v2. S1 deve convergir imediatamente para v2!
+        hubC1.registrarAssinante(v1, false);
+        hubC1.registrarAssinante(v2, true);
+        hubC1.publicarAtualizacao(v2);
+
+        assertEquals(2, criadosC1.size());
+        assertEquals(2, criadosC1.get(0).getRawFrames().size());
+        assertTrue(criadosC1.get(0).getRawFrames().get(0).startsWith("id:1\n"));
+        assertTrue(criadosC1.get(0).getRawFrames().get(1).startsWith("id:2\n"));
+        assertTrue(criadosC1.get(0).getRawFrames().get(1).contains("Folguista Turno A"));
+
+        assertEquals(1, criadosC1.get(1).getRawFrames().size());
+        assertTrue(criadosC1.get(1).getRawFrames().get(0).startsWith("id:2\n"));
+        assertTrue(criadosC1.get(1).getRawFrames().get(0).contains("Folguista T."));
+
+        // Prova C2: destroy() concorrente exatamente apos emitterFactory.apply e antes de adquirir
+        // stateAndRegistrationLock nao pode inserir assinante zumbi nem deixar contador sujo.
+        AtomicReference<CuidadorSseBroadcaster> hubRef = new AtomicReference<>();
+        List<TestSseEmitter> criadosC2 = new ArrayList<>();
+        CuidadorSseBroadcaster hubC2 =
+                new CuidadorSseBroadcaster(
+                        JSON_MAPPER,
+                        30_000L,
+                        10,
+                        3_000L,
+                        0L,
+                        Runnable::run,
+                        timeout -> {
+                            TestSseEmitter e = new TestSseEmitter(timeout);
+                            criadosC2.add(e);
+                            if (criadosC2.size() == 2) {
+                                hubRef.get().destroy();
+                            }
+                            return e;
+                        },
+                        LgpdPrivacyMasker::projetarListaPublica);
+        hubRef.set(hubC2);
+
+        hubC2.registrarAssinante(v1, false);
+        assertEquals(1, hubC2.contarAssinantesAtivos());
+
+        hubC2.registrarAssinante(v2, true);
+        assertTrue(hubC2.estaEncerrado());
+        assertEquals(0, hubC2.contarAssinantesAtivos());
+        assertEquals(0, hubC2.contarOrdemChegadaRegistrada());
+        assertEquals(0, hubC2.contarAssinantesPrivacidadeAtivos());
+        assertTrue(criadosC2.get(0).isCompleted());
+        assertTrue(criadosC2.get(1).isCompleted());
+        assertTrue(criadosC2.get(1).getRawFrames().isEmpty());
     }
 }

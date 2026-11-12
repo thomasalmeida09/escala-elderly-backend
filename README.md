@@ -49,7 +49,7 @@ escala-elderly-backend/
 │   │   │   │   ├── EscalaElderlyApiApplication.java          # Classe de inicialização (@SpringBootApplication)
 │   │   │   │   ├── WebApiConfig.java                         # CorsFilter em /api/** e customizador estrito Jackson 3
 │   │   │   │   ├── CuidadorController.java                   # Rotas REST (GET, PATCH /status, POST /batch, POST /reset)
-│   │   │   │   ├── CuidadorService.java                      # Motor MVCC lock-free (AtomicReference<List<Cuidador>>)
+│   │   │   │   ├── CuidadorService.java                      # Motor MVCC lock-free (AtomicReference<SnapshotEscala>)
 │   │   │   │   ├── CuidadorSseBroadcaster.java               # Hub concorrente SSE (SseEmitter, isolamento LGPD e heartbeat)
 │   │   │   │   ├── Cuidador.java                             # Entidade imutável canônica (@JsonInclude NON_NULL)
 │   │   │   │   ├── StatusCuidador.java                       # Política dos 4 status válidos (Presente, Faltou, Folga, Cobertura)
