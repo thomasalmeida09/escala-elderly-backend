@@ -264,6 +264,29 @@ class EscalaElderlyApiApplicationTests {
         mockMvc.perform(get("/api/cuidadores?privacy=true&privacy=true"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_PAYLOAD"));
+
+        // C1: Prova HTTP end-to-end na fronteira exata de 120 caracteres (nome e substituto <= 120
+        // em ?privacy=true)
+        String limite120 = "A".repeat(118) + " B";
+        String loteFronteira120 =
+                "[{\"id\":3,\"nome\":\""
+                        + limite120
+                        + "\",\"status\":\"Cobertura\",\"substituto\":\""
+                        + limite120
+                        + "\"}]";
+        mockMvc.perform(
+                        post("/api/cuidadores/batch")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(loteFronteira120))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].nome").value(limite120))
+                .andExpect(jsonPath("$[0].substituto").value(limite120));
+
+        String esperadoMascarado120 = "A".repeat(117) + " B.";
+        mockMvc.perform(get("/api/cuidadores").param("privacy", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].nome").value(esperadoMascarado120))
+                .andExpect(jsonPath("$[0].substituto").value(esperadoMascarado120));
     }
 
     @Test
@@ -382,7 +405,11 @@ class EscalaElderlyApiApplicationTests {
                     "ftp://app.escala.example.com",
                     "http://",
                     "https://",
-                    "http://localhost:5173 /api"
+                    "http://localhost:5173 /api",
+                    "https://app.escala.example.com/painel",
+                    "https://app.escala.example.com?env=prod",
+                    "https://app.escala.example.com#secao",
+                    "https://admin@example.com"
                 }) {
             assertThrows(
                     IllegalArgumentException.class,

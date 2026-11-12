@@ -82,7 +82,7 @@ public final class LgpdPrivacyMasker {
 
         String[] tokens = normalizado.split("\\s+");
         if (tokens.length <= 1) {
-            return tokens[0];
+            return truncarUtf16Seguro(tokens[0], CuidadorService.MAX_TEXT_LENGTH);
         }
 
         String primeiroNome = tokens[0];
@@ -99,7 +99,21 @@ public final class LgpdPrivacyMasker {
 
         int inicialCodePoint = Character.toUpperCase(sobrenomeAlvo.codePointAt(0));
         String inicial = new String(Character.toChars(inicialCodePoint));
-        return primeiroNome + " " + inicial + ".";
+        String sufixo = " " + inicial + ".";
+        int limitePrenome = Math.max(1, CuidadorService.MAX_TEXT_LENGTH - sufixo.length());
+        String prenomeSeguro = truncarUtf16Seguro(primeiroNome, limitePrenome);
+        return prenomeSeguro + sufixo;
+    }
+
+    private static String truncarUtf16Seguro(String texto, int maxChars) {
+        if (texto.length() <= maxChars) {
+            return texto;
+        }
+        int corte = maxChars;
+        if (corte > 0 && Character.isHighSurrogate(texto.charAt(corte - 1))) {
+            corte--;
+        }
+        return texto.substring(0, corte);
     }
 
     /** Mascara telefones nao-nulos com zero digitos expostos; preserva null para @JsonInclude. */
