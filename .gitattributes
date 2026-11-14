@@ -1,0 +1,16 @@
+# Normalize text files to LF across Windows/macOS/Linux (ADR-BE-007 & Spotless UNIX EOL)
+* text=auto eol=lf
+
+# Shell scripts and Gradle wrapper must always use LF
+*.sh text eol=lf
+**/gradlew text eol=lf
+
+# Windows batch scripts require CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary archives
+*.jar binary
+*.png binary
+*.jpg binary
+*.pdf binary
