@@ -1,0 +1,71 @@
+# ==============================================================================
+# Escala Elderly Backend — Root Git Ignore (Polyrepo & Gradle Subproject Guard)
+# ==============================================================================
+
+# Gradle & JVM Build Outputs (root and subprojects)
+.gradle/
+**/.gradle/
+build/
+**/build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+!**/gradle/wrapper/gradle-wrapper.jar
+
+# Compiled Classes & IDE Output Folders
+bin/
+**/bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+out/
+**/out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+target/
+
+# Spring Tool Suite / Eclipse
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# VS Code (keep shared recommendations if added later, ignore local workspace state)
+.vscode/
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# Environment, Secrets & Local Logs (Clean-Room & LGPD Hygiene)
+.env
+.env.*
+!.env.example
+*.log
+hs_err_pid*
+replay_pid*
+
+# Dados de funcionários e planilhas exportadas (LGPD): nunca versionar
+*.csv
+*.vcf
+*.xlsx
+*.db
+*.sqlite
+data/
+leads/
+clientes/
+
+# OS Metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
