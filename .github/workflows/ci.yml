@@ -1,0 +1,35 @@
+name: Backend CI (Ítalo)
+
+# QUANDO rodar: em push e PR para qualquer branch que comece com "italo/"
+on:
+  push:
+    branches: ['italo/**']
+  pull_request:
+    branches: ['italo/**']
+
+jobs:
+  build:
+    # ONDE rodar: numa máquina Linux nova, criada pelo GitHub a cada execução
+    runs-on: ubuntu-latest
+
+    # O projeto Gradle está na subpasta (o "custo" da ADR-005)
+    defaults:
+      run:
+        working-directory: escala-elderly-api
+
+    # O QUE fazer, em ordem
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar o Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Preparar o Gradle (com cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compilar e rodar os testes
+        run: ./gradlew build
